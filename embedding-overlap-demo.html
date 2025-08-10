@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Embeddings Can Overlap — Demo</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff;
+    --line:#223252; --card:#141b2f; --good:#6ee7b7; --warn:#fbbf24; --bad:#fca5a5;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px}
+  h1{font-size:22px;margin:0 0 6px}
+  .note{color:var(--muted);margin:0 0 14px}
+  .grid{display:grid;grid-template-columns:1.1fr 0.9fr;gap:16px}
+  @media (max-width:1020px){.grid{grid-template-columns:1fr}}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .box h2{font-size:16px;margin:0 0 8px}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0}
+  label{color:#cbd6ea}
+  input[type=number], select, button, input[type=file]{background:#0f1629;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  input[type=range]{width:220px}
+  button{cursor:pointer}
+  .canvWrap{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .thumb{display:grid;place-items:center;background:#0f1629;border:1px solid var(--line);border-radius:12px;overflow:hidden;aspect-ratio:1/1;position:relative}
+  canvas.thumbCv{width:100%;height:100%}
+  .cap{position:absolute;left:8px;top:8px;background:#0f1629;border:1px solid var(--line);border-radius:8px;padding:2px 8px;color:#cbd6ea}
+  .stat{color:#cfe0ff}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;color:#cbd6ea;background:#0f1629}
+  .heat{display:grid;grid-auto-flow:column;gap:1px;align-items:center;margin-top:8px}
+  .cell{height:10px;width:10px;background:#1a2742}
+  .legend{color:#9fb1d3;font-size:12px;margin-top:6px}
+  .krow{display:flex;justify-content:space-between;gap:8px;color:#cbd6ea}
+  .mini{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-top:10px}
+  .mini .slot{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0f1629;position:relative}
+  .mini canvas{width:100%;height:86px;display:block}
+  .badge{position:absolute;right:6px;top:6px;background:#0f1629;border:1px solid var(--line);border-radius:8px;padding:1px 6px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Embeddings Can Overlap</h1>
+  <div class="note">Two different images can yield nearly identical embeddings—especially with coarse features or after quantization. Compare A vs B below.</div>
+
+  <div class="grid">
+    <div class="box">
+      <h2>Images</h2>
+      <div class="row">
+        <label>Preset pair:
+          <select id="pair">
+            <option value="circsq">Blue Circle vs Blue Square (same colors)</option>
+            <option value="stripes">Vertical vs Shifted Stripes</option>
+            <option value="checker">Checker vs Blurred Checker</option>
+          </select>
+        </label>
+        <button id="loadPair">Load</button>
+        <span class="pill">…or upload your own:</span>
+        <input type="file" id="upA" accept="image/*" title="Upload image A"/>
+        <input type="file" id="upB" accept="image/*" title="Upload image B"/>
+      </div>
+
+      <div class="canvWrap">
+        <div class="thumb"><div class="cap">A</div><canvas id="cvA" class="thumbCv" width="256" height="256" aria-label="Image A"></canvas></div>
+        <div class="thumb"><div class="cap">B</div><canvas id="cvB" class="thumbCv" width="256" height="256" aria-label="Image B"></canvas></div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <label>Embedding grid:
+          <select id="gridSize">
+            <option value="4">4 × 4 (coarse)</option>
+            <option value="8" selected>8 × 8</option>
+          </select>
+        </label>
+        <label>Quantize (decimals):
+          <input id="quant" type="number" step="1" min="0" max="4" value="2"/>
+        </label>
+        <label>Metric:
+          <select id="metric">
+            <option value="cosine">Cosine similarity</option>
+            <option value="euclid">Euclidean distance</option>
+          </select>
+        </label>
+        <button id="compute">Compute</button>
+      </div>
+
+      <div class="row stat" id="simOut">—</div>
+      <div id="heat" class="heat" aria-label="Per-dimension differences"></div>
+      <div class="legend">Per-dimension |A−B| after quantization (darker = larger difference)</div>
+    </div>
+
+    <div class="box">
+      <h2>Nearest Neighbor Mini-Demo</h2>
+      <div class="note">A is used as the query; we add four distractors. If B’s embedding is near-identical to A’s, it returns as top-1.</div>
+      <div class="mini" id="gallery"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="rerun">Recompute NN</button>
+        <span id="nnResult" class="pill">—</span>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div class="krow"><span>Collision after rounding?</span><strong id="collision">—</strong></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ====== Drawing presets (procedural, no external images) ====== */
+function drawCircle(ctx, fg='#5ac8ff', bg='#102038'){
+  const {width:w, height:h} = ctx.canvas;
+  ctx.fillStyle=bg; ctx.fillRect(0,0,w,h);
+  ctx.fillStyle=fg; ctx.beginPath(); ctx.arc(w/2,h/2, Math.min(w,h)*0.35, 0, Math.PI*2); ctx.fill();
+}
+function drawSquare(ctx, fg='#5ac8ff', bg='#102038'){
+  const {width:w, height:h} = ctx.canvas;
+  ctx.fillStyle=bg; ctx.fillRect(0,0,w,h);
+  ctx.fillStyle=fg; const s=Math.min(w,h)*0.70; ctx.fillRect((w-s)/2,(h-s)/2,s,s);
+}
+function drawStripes(ctx, shift=0){
+  const {width:w, height:h} = ctx.canvas;
+  ctx.fillStyle='#0f1a2b'; ctx.fillRect(0,0,w,h);
+  const cols=10; const band=w/cols;
+  for(let i=0;i<cols;i++){
+    const x = Math.floor((i+shift)*band)%w;
+    ctx.fillStyle = i%2? '#4cc9f0' : '#1e3a8a';
+    ctx.fillRect(x,0,band,h);
+  }
+}
+function drawChecker(ctx, size=32, blur=false){
+  const {width:w, height:h} = ctx.canvas;
+  ctx.fillStyle='#0f1a2b'; ctx.fillRect(0,0,w,h);
+  for(let y=0;y<h;y+=size){
+    for(let x=0;x<w;x+=size){
+      const on = ((x/size + y/size)|0)%2===0;
+      ctx.fillStyle = on? '#a78bfa' : '#1e293b';
+      ctx.fillRect(x,y,size,size);
+    }
+  }
+  if(blur){
+    // simple box blur pass
+    const it=ctx.getImageData(0,0,w,h); const src=it.data;
+    const out=ctx.createImageData(w,h); const dst=out.data;
+    const r=2;
+    for(let j=0;j<h;j++){
+      for(let i=0;i<w;i++){
+        let R=0,G=0,B=0,A=0,count=0;
+        for(let dy=-r;dy<=r;dy++){
+          for(let dx=-r;dx<=r;dx++){
+            const x= Math.min(w-1, Math.max(0, i+dx));
+            const y= Math.min(h-1, Math.max(0, j+dy));
+            const k=(y*w+x)*4;
+            R+=src[k]; G+=src[k+1]; B+=src[k+2]; A+=src[k+3]; count++;
+          }
+        }
+        const k=(j*w+i)*4;
+        dst[k]=R/count; dst[k+1]=G/count; dst[k+2]=B/count; dst[k+3]=A/count;
+      }
+    }
+    ctx.putImageData(out,0,0);
+  }
+}
+
+/* ====== Simple embedding: average color per grid cell ======
+   Produces vector length (grid*grid)*3 in [0,1]. Optionally quantize decimals.
+=============================================================*/
+function embedFromCanvas(ctx, grid=8, decimals=2){
+  const {width:w, height:h} = ctx.canvas;
+  const cellW = Math.floor(w/grid), cellH=Math.floor(h/grid);
+  const out = [];
+  for(let gy=0; gy<grid; gy++){
+    for(let gx=0; gx<grid; gx++){
+      const x=gx*cellW, y=gy*cellH;
+      const img=ctx.getImageData(x,y,cellW,cellH);
+      let R=0,G=0,B=0,count=img.data.length/4;
+      for(let i=0;i<img.data.length;i+=4){ R+=img.data[i]; G+=img.data[i+1]; B+=img.data[i+2]; }
+      R/=count; G/=count; B/=count;
+      // normalize to [0,1]
+      R=R/255; G=G/255; B=B/255;
+      // quantize decimals (simulate PQ/rounding)
+      const q=Math.pow(10,decimals);
+      out.push(Math.round(R*q)/q, Math.round(G*q)/q, Math.round(B*q)/q);
+    }
+  }
+  return out;
+}
+
+function cosine(a,b){
+  let num=0,na=0,nb=0;
+  for(let i=0;i<a.length;i++){ const x=a[i], y=b[i]; num+=x*y; na+=x*x; nb+=y*y; }
+  na=Math.sqrt(na); nb=Math.sqrt(nb);
+  if(na===0||nb===0) return 0;
+  return num/(na*nb);
+}
+function euclid(a,b){
+  let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; } return Math.sqrt(s);
+}
+
+/* ====== UI Elements ====== */
+const cvA = document.getElementById('cvA');
+const cvB = document.getElementById('cvB');
+const ctxA = cvA.getContext('2d');
+const ctxB = cvB.getContext('2d');
+
+const pairSel = document.getElementById('pair');
+const loadPair= document.getElementById('loadPair');
+const upA = document.getElementById('upA');
+const upB = document.getElementById('upB');
+
+const gridSize = document.getElementById('gridSize');
+const quantEl  = document.getElementById('quant');
+const metricEl = document.getElementById('metric');
+const computeBtn = document.getElementById('compute');
+
+const simOut = document.getElementById('simOut');
+const heat   = document.getElementById('heat');
+
+const gallery = document.getElementById('gallery');
+const rerun   = document.getElementById('rerun');
+const nnResult= document.getElementById('nnResult');
+const collision = document.getElementById('collision');
+
+/* ====== Rendering helpers ====== */
+function loadPreset(){
+  const val = pairSel.value;
+  if(val==='circsq'){ drawCircle(ctxA); drawSquare(ctxB); }
+  else if(val==='stripes'){ drawStripes(ctxA, 0); drawStripes(ctxB, 0.35); }
+  else if(val==='checker'){ drawChecker(ctxA, 32, false); drawChecker(ctxB, 32, true); }
+}
+
+function loadFileToCanvas(file, ctx){
+  const img = new Image();
+  img.onload = ()=>{
+    const {width:w, height:h} = ctx.canvas;
+    // cover
+    const r = Math.max(w/img.width, h/img.height);
+    const sw = img.width*r, sh = img.height*r;
+    const sx = (w - sw)/2, sy=(h - sh)/2;
+    ctx.clearRect(0,0,w,h);
+    ctx.drawImage(img, sx, sy, sw, sh);
+  };
+  img.src = URL.createObjectURL(file);
+}
+
+function renderHeat(a,b){
+  heat.innerHTML='';
+  const diffs = a.map((v,i)=>Math.abs(v-b[i]));
+  // normalize for color intensity
+  const max = Math.max(...diffs) || 1;
+  diffs.forEach(d=>{
+    const c = Math.floor(255 - 255*(d/max));
+    const el = document.createElement('div');
+    el.className='cell';
+    el.style.background = `rgb(${c}, ${c}, 255)`; // darker blue = larger diff
+    heat.appendChild(el);
+  });
+}
+
+function fmt(n){ return (Math.round(n*10000)/10000).toFixed(4); }
+
+/* ====== NN mini-demo ====== */
+function drawMini(ctx, kind){
+  if(kind==='A'){ ctx.drawImage(cvA, 0,0, ctx.canvas.width, ctx.canvas.height); }
+  else if(kind==='B'){ ctx.drawImage(cvB, 0,0, ctx.canvas.width, ctx.canvas.height); }
+  else if(kind==='noise'){
+    // distractor: random colors
+    const {width:w, height:h} = ctx.canvas;
+    for(let y=0;y<h;y+=8){
+      for(let x=0;x<w;x+=8){
+        ctx.fillStyle = `hsl(${Math.random()*360}, 60%, ${40+Math.random()*30}%)`;
+        ctx.fillRect(x,y,8,8);
+      }
+    }
+  }else if(kind==='grad'){
+    const {width:w, height:h} = ctx.canvas;
+    const g = ctx.createLinearGradient(0,0,w,h);
+    g.addColorStop(0,'#0ea5e9'); g.addColorStop(1,'#1e293b');
+    ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+  }else if(kind==='shapes'){
+    const {width:w, height:h} = ctx.canvas;
+    ctx.fillStyle='#0f1a2b'; ctx.fillRect(0,0,w,h);
+    ctx.fillStyle='#eab308';
+    for(let i=0;i<30;i++){
+      ctx.beginPath();
+      ctx.arc(Math.random()*w, Math.random()*h, 4+Math.random()*8, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+}
+
+function runNN(){
+  // Gallery: [A (query), B (candidate), plus 4 distractors]
+  gallery.innerHTML='';
+  const kinds = ['A','B','noise','grad','shapes','noise'];
+  const tiles = [];
+  const embeds = [];
+
+  const grid = parseInt(gridSize.value,10);
+  const qdec = parseInt(quantEl.value,10);
+
+  // compute embedding for A first (query)
+  const q = embedFromCanvas(ctxA, grid, qdec);
+
+  for(let i=0;i<kinds.length;i++){
+    const slot = document.createElement('div'); slot.className='slot';
+    const cv = document.createElement('canvas'); cv.width=128; cv.height=86; slot.appendChild(cv);
+    const badge = document.createElement('div'); badge.className='badge'; badge.textContent = kinds[i]; slot.appendChild(badge);
+    const c = cv.getContext('2d');
+    drawMini(c, kinds[i]);
+    gallery.appendChild(slot);
+    tiles.push({kind:kinds[i], ctx:c});
+    embeds.push(embedFromCanvas(c, grid, qdec));
+  }
+
+  // compute similarities
+  const metric = metricEl.value;
+  let scores = embeds.map(v => metric==='cosine' ? cosine(q,v) : euclid(q,v));
+  const order = [...scores.keys()].sort((i,j)=> metric==='cosine' ? (scores[j]-scores[i]) : (scores[i]-scores[j]));
+  const best = order[0];
+  nnResult.textContent = metric==='cosine'
+    ? `Top-1: ${kinds[best]} (similarity ${fmt(scores[best])})`
+    : `Top-1: ${kinds[best]} (distance ${fmt(scores[best])})`;
+}
+
+/* ====== Compute button ====== */
+function compute(){
+  const grid = parseInt(gridSize.value,10);
+  const qdec = parseInt(quantEl.value,10);
+  const a = embedFromCanvas(ctxA, grid, qdec);
+  const b = embedFromCanvas(ctxB, grid, qdec);
+  const metric = metricEl.value;
+
+  const sim = metric==='cosine' ? cosine(a,b) : euclid(a,b);
+  const label = metric==='cosine' ? `Cosine similarity: ${fmt(sim)}` : `Euclidean distance: ${fmt(sim)}`;
+  simOut.innerHTML = `${label} • vector length: <b>${a.length}</b> • grid: <b>${grid}×${grid}</b> • quant: <b>${qdec} decimals</b>`;
+
+  renderHeat(a,b);
+
+  // collision after rounding (exact equality)
+  const collide = a.length === b.length && a.every((v,i)=>v===b[i]);
+  collision.textContent = collide ? 'Yes — vectors identical after rounding' : 'No — not identical';
+}
+
+/* ====== Event hooks ====== */
+loadPair.addEventListener('click', ()=>{ loadPreset(); compute(); runNN(); });
+upA.addEventListener('change', e=>{ if(e.target.files[0]) loadFileToCanvas(e.target.files[0], ctxA); });
+upB.addEventListener('change', e=>{ if(e.target.files[0]) loadFileToCanvas(e.target.files[0], ctxB); });
+computeBtn.addEventListener('click', ()=>{ compute(); runNN(); });
+rerun.addEventListener('click', runNN);
+
+/* ====== Init ====== */
+(function init(){
+  loadPreset(); // default pair
+  compute();
+  runNN();
+})();
+</script>
+</body>
+</html>
