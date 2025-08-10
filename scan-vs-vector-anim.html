@@ -41,6 +41,27 @@
   .sw.sql{background:var(--sql)} .sw.ivf{background:var(--ivf)} .sw.probe{background:var(--probe)} .sw.hit{background:#0e1726;box-shadow:0 0 0 2px var(--hit) inset}
   .mini{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
   code{background:#0b162b;border:1px solid var(--line);border-radius:8px;padding:1px 6px}
+  /* --- Compact embed mode (shorter, scrollable boards) --- */
+  .boards { gap: 12px; }
+  .board { padding: 8px; }
+  
+  .gridview{
+    /* Fixed viewport height + scroll instead of growing vertically */
+    max-height: 300px;           /* tweak to 260–340px if needed */
+    overflow-y: auto;
+    padding-right: 4px;          /* space for scrollbar */
+  }
+  
+  /* Make cells shorter (remove square aspect) to reduce vertical growth */
+  .cell{
+    aspect-ratio: auto;          /* cancel 1/1 */
+    height: 12px;                /* was square; this is compact */
+  }
+  
+  /* Slightly denser layout text */
+  .stats { font-size: 12px; }
+  .legend { margin-top: 4px; font-size: 11px; gap: 8px; }
+  .title { margin-bottom: 4px; }
 </style>
 </head>
 <body>
