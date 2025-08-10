@@ -51,21 +51,24 @@
       <span class="pill" id="pos">Q1 of 8</span>
     </div>
 
-    <!-- Question card -->
-    <div id="card" class="qcard" role="group" aria-live="polite"></div>
+    <!-- QA container (questions + pager) -->
+    <div id="qa">
+      <!-- Question card -->
+      <div id="card" class="qcard" role="group" aria-live="polite"></div>
 
-    <!-- Pager -->
-    <div class="nav">
-      <button id="prev">◀︎ Previous</button>
-      <div class="progress" aria-label="Progress">
-        <div id="bar" class="bar"></div>
+      <!-- Pager -->
+      <div class="nav">
+        <button id="prev">◀︎ Previous</button>
+        <div class="progress" aria-label="Progress">
+          <div id="bar" class="bar"></div>
+        </div>
+        <button id="next">Next ▶︎</button>
+        <button id="submit" style="display:none">Submit</button>
       </div>
-      <button id="next">Next ▶︎</button>
-      <button id="submit" style="display:none">Submit</button>
     </div>
 
     <!-- Score ring (hidden until submit) -->
-    <div id="scoreArea" class="ringWrap" hidden>
+    <div id="scoreArea" class="ringWrap" hidden tabindex="-1">
       <svg class="ring" viewBox="0 0 120 120" aria-label="Score ring">
         <circle cx="60" cy="60" r="54" fill="none" stroke="#1f2a44" stroke-width="10"/>
         <circle id="arc" cx="60" cy="60" r="54" fill="none" stroke="var(--bad)" stroke-width="10"
@@ -73,7 +76,7 @@
         <text id="scoreText" x="60" y="66" text-anchor="middle" fill="var(--bad)">0%</text>
       </svg>
       <div id="meta" class="meta">Submit answers to see your score.</div>
-      <div class="hint">Use Previous/Next to review—explanations are now visible.</div>
+      <div class="hint">Use Reset or Shuffle to try again.</div>
     </div>
   </div>
 </div>
@@ -175,7 +178,7 @@ const QUESTIONS = [
 let order = [...QUESTIONS.keys()];
 let answers = new Map();        // qi -> selected index
 let page = 0;                   // index within 'order'
-let submitted = false;          // after Submit, show explanations during review
+let submitted = false;          // after Submit, hide QA and show score only
 
 /* ----------------- DOM ----------------- */
 const card = document.getElementById('card');
@@ -191,10 +194,14 @@ const scoreArea = document.getElementById('scoreArea');
 const arc = document.getElementById('arc');
 const scoreText = document.getElementById('scoreText');
 const meta = document.getElementById('meta');
+const qa = document.getElementById('qa');
 const CIRC = 2*Math.PI*54;
 
 /* ----------------- Rendering ----------------- */
 function render(){
+  // if we're in score-only mode, nothing to render for QA
+  if(submitted){ return; }
+
   const qi = order[page];
   const item = QUESTIONS[qi];
   posLbl.textContent = `Q${page+1} of ${order.length}`;
@@ -232,7 +239,7 @@ function render(){
   list.addEventListener('change', (e)=>{
     if(e.target && e.target.name === `q${qi}`){
       answers.set(qi, parseInt(e.target.value,10));
-      // if reveal mode is "always" OR after submit, show feedback immediately
+      // if reveal mode is "always" OR after submit (review mode), show feedback immediately
       if(revealMode.value==='always' || submitted){
         showFeedback(qi);
       }
@@ -244,7 +251,7 @@ function render(){
   nextBtn.style.display = (page < order.length-1) ? 'inline-block' : 'none';
   submitBtn.style.display = (page === order.length-1 && !submitted) ? 'inline-block' : 'none';
 
-  // during review (submitted=true), show explanations
+  // during review (submitted=true), show explanations (not used in score-only mode)
   if(revealMode.value==='always' || submitted){
     showFeedback(qi);
   }
@@ -306,11 +313,18 @@ submitBtn.addEventListener('click', ()=>{
   });
   const pct = (correct/total)*100;
   submitted = true;
-  // show score area + explanations on current (and future) pages
+
+  // Hide questions + pager, show score only
+  qa.hidden = true;
   scoreArea.hidden = false;
+  scoreArea.focus(); // a11y: move focus to results
+
+  // (Optional) lock controls after submit so it's clearly the end
+  prevBtn.disabled = true; nextBtn.disabled = true; submitBtn.disabled = true; revealMode.disabled = true;
+
   meta.textContent = `You got ${correct} of ${total} correct.`;
   animateRingTo(pct);
-  render();
+  // No render() here — we keep pure score view after submit
 });
 
 shuffleBtn.addEventListener('click', ()=>{
@@ -319,15 +333,25 @@ shuffleBtn.addEventListener('click', ()=>{
     const j=Math.floor(Math.random()*(i+1));
     [order[i],order[j]]=[order[j],order[i]];
   }
-  page=0; submitted=false; scoreArea.hidden=true; setRing(0);
+  // Reset state & UI
+  page=0; submitted=false;
+  qa.hidden = false;
+  scoreArea.hidden = true;
+  setRing(0);
+  scoreText.setAttribute('fill','var(--bad)'); arc.style.stroke='var(--bad)';
+  prevBtn.disabled = false; nextBtn.disabled = false; submitBtn.disabled = false; revealMode.disabled = false;
   render();
 });
 
 resetBtn.addEventListener('click', ()=>{
   answers.clear();
   order=[...QUESTIONS.keys()];
-  page=0; submitted=false; scoreArea.hidden=true; setRing(0);
+  page=0; submitted=false;
+  qa.hidden = false;
+  scoreArea.hidden = true;
+  setRing(0);
   scoreText.setAttribute('fill','var(--bad)'); arc.style.stroke='var(--bad)';
+  prevBtn.disabled = false; nextBtn.disabled = false; submitBtn.disabled = false; revealMode.disabled = false;
   render();
 });
 
