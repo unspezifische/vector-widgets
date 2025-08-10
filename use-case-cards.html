@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Vector DB Use-Cases — Clickable Cards + Mini Demos</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff; --line:#223252; --card:#141b2f; --chip:#0f1629;
+    --good:#6ee7b7; --warn:#fbbf24; --bad:#fca5a5; --bar:#bcd1f0;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px}
+  h1{font-size:22px;margin:0 0 8px}
+  .note{color:var(--muted);margin:0 0 14px}
+  .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
+  @media (max-width:1100px){.grid{grid-template-columns:repeat(3,1fr)}}
+  @media (max-width:760px){.grid{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:520px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;cursor:pointer;display:flex;flex-direction:column;gap:6px;min-height:120px}
+  .card:hover{outline:2px solid var(--accent);outline-offset:2px}
+  .card h3{font-size:15px;margin:0}
+  .card p{margin:0;color:#cbd6ea;font-size:13px}
+  .demo{margin-top:14px;border:1px solid var(--line);border-radius:14px;background:#0f1629;padding:12px;display:none}
+  .demo.active{display:block}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0}
+  label{color:#cbd6ea}
+  input,select,button,textarea{background:var(--chip);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  button{cursor:pointer}
+  textarea{width:100%;min-height:80px}
+  .list{display:grid;gap:6px}
+  .item{display:flex;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:10px;padding:8px;background:#0b162b}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:#0f1629;color:#cbd6ea}
+  .tag{display:inline-block;padding:2px 6px;border:1px solid var(--line);border-radius:999px;background:#0b162b;color:#cbd6ea;font-size:12px}
+  .miniGrid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+  .slot{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0b162b;position:relative}
+  .slot canvas{width:100%;height:86px;display:block}
+  .badge{position:absolute;left:6px;top:6px;background:#0f1629;border:1px solid var(--line);border-radius:8px;padding:1px 6px;font-size:12px}
+  .chart{height:160px;width:100%;background:#0f1629;border:1px solid var(--line);border-radius:12px}
+  .tiny{height:120px}
+  .score{color:#cfe0ff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>What Can You Build with Vector Databases?</h1>
+  <div class="note">Click a card to open a tiny, interactive demo of that use-case.</div>
+
+  <!-- Cards -->
+  <div class="grid" role="list">
+    <div class="card" role="listitem" data-demo="img">
+      <h3>Image Similarity</h3>
+      <p>Find pictures “like this one.”</p>
+      <span class="pill">Vectors: image embeddings</span>
+    </div>
+    <div class="card" role="listitem" data-demo="txt">
+      <h3>Semantic Text Search</h3>
+      <p>Find passages with the same meaning.</p>
+      <span class="pill">Vectors: sentence embeddings</span>
+    </div>
+    <div class="card" role="listitem" data-demo="rec">
+      <h3>Recommendations</h3>
+      <p>Users who liked this also liked…</p>
+      <span class="pill">Vectors: user & item embeddings</span>
+    </div>
+    <div class="card" role="listitem" data-demo="aud">
+      <h3>Audio Match</h3>
+      <p>Identify sounds by their “fingerprint.”</p>
+      <span class="pill">Vectors: spectral embeddings</span>
+    </div>
+    <div class="card" role="listitem" data-demo="anom">
+      <h3>Anomaly Detection</h3>
+      <p>Flag items unlike the rest.</p>
+      <span class="pill">Vectors: behavior embeddings</span>
+    </div>
+  </div>
+
+  <!-- Demos -->
+  <!-- 1) Image Similarity -->
+  <div id="demo-img" class="demo" aria-live="polite">
+    <h3>Image Similarity — Mini Demo</h3>
+    <div class="row">
+      <label>Preset:
+        <select id="imgPreset">
+          <option value="tulips">🌸 Tulips</option>
+          <option value="puppy">🐶 Puppy</option>
+          <option value="checker">Checker</option>
+          <option value="gradient">Gradient</option>
+        </select>
+      </label>
+      <label>Grid <select id="imgGrid"><option>4</option><option selected>8</option></select></label>
+      <label>Quant <select id="imgQuant"><option>0</option><option selected>2</option><option>3</option></select></label>
+      <button id="imgRun">Find Similar</button>
+    </div>
+    <div class="miniGrid" id="imgGallery"></div>
+    <div class="row"><span class="pill" id="imgOut">—</span></div>
+  </div>
+
+  <!-- 2) Semantic Text Search -->
+  <div id="demo-txt" class="demo">
+    <h3>Semantic Text Search — Mini Demo</h3>
+    <div class="row">
+      <label>Dims <select id="txtDims"><option>32</option><option selected>64</option><option>128</option></select></label>
+      <button id="txtRun">Search</button>
+    </div>
+    <textarea id="txtQuery">dog playing in a flower garden</textarea>
+    <div class="list" id="txtList"></div>
+    <div class="row"><span class="pill" id="txtOut">—</span></div>
+  </div>
+
+  <!-- 3) Recommendations -->
+  <div id="demo-rec" class="demo">
+    <h3>Recommendations — Mini Demo</h3>
+    <div class="row">
+      <span class="pill">Pick a few titles you “like”, then Recommend</span>
+      <button id="recRun">Recommend</button>
+    </div>
+    <div class="list" id="recItems"></div>
+    <div class="list" id="recResults" style="margin-top:8px"></div>
+  </div>
+
+  <!-- 4) Audio Match -->
+  <div id="demo-aud" class="demo">
+    <h3>Audio Fingerprint — Mini Demo</h3>
+    <div class="row">
+      <button id="audSine">Play Sine 440Hz</button>
+      <button id="audChord">Play Triad</button>
+      <button id="audNoise">Play Noise</button>
+      <label>Bands <select id="audBands"><option>32</option><option selected>64</option><option>128</option></select></label>
+      <button id="audSnap">Snapshot & Match</button>
+    </div>
+    <canvas id="audChart" class="chart tiny" width="900" height="120" aria-label="Audio embedding"></canvas>
+    <div class="row"><span class="pill" id="audOut">Status: idle</span></div>
+  </div>
+
+  <!-- 5) Anomaly Detection -->
+  <div id="demo-anom" class="demo">
+    <h3>Anomaly Detection — Mini Demo</h3>
+    <div class="row">
+      <label>Points <select id="anomN"><option>200</option><option selected>400</option><option>800</option></select></label>
+      <label>Outlier % <select id="anomPct"><option>2</option><option selected>5</option><option>10</option></select></label>
+      <label>Z-score thresh <input id="anomZ" type="number" step="0.1" value="2.2"/></label>
+      <button id="anomRun">Generate</button>
+    </div>
+    <canvas id="anomCv" class="chart" width="900" height="160" aria-label="Anomaly scatter"></canvas>
+    <div class="row"><span class="pill" id="anomOut">—</span></div>
+  </div>
+</div>
+
+<script>
+/* ---------- Common helpers ---------- */
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+function cosine(a,b){ let num=0,na=0,nb=0; for(let i=0;i<a.length;i++){const x=a[i],y=b[i]; num+=x*y; na+=x*x; nb+=y*y;} if(!na||!nb) return 0; return num/(Math.sqrt(na)*Math.sqrt(nb)); }
+const fmt = n => (Math.round(n*10000)/10000).toFixed(4);
+
+/* ---------- Expand/collapse cards ---------- */
+$$('.card').forEach(c=>{
+  c.addEventListener('click', ()=>{
+    const id = c.dataset.demo;
+    $$('.demo').forEach(d=>d.classList.remove('active'));
+    $('#demo-'+id).classList.add('active');
+  });
+});
+
+/* ================= 1) Image similarity ================= */
+const imgGallery = $('#imgGallery');
+function drawPreset(ctx, kind){
+  const {width:w,height:h}=ctx.canvas;
+  ctx.fillStyle='#0f1a2b'; ctx.fillRect(0,0,w,h);
+  if(kind==='tulips'){
+    for(let i=0;i<100;i++){
+      ctx.fillStyle=`hsl(${280+Math.random()*20},70%,${45+Math.random()*20}%)`;
+      const x=Math.random()*w, y=h*0.55+Math.random()*h*0.4;
+      ctx.beginPath(); ctx.ellipse(x,y,4+Math.random()*4,8+Math.random()*8,0,0,6.283); ctx.fill();
+    }
+  }else if(kind==='puppy'){
+    ctx.fillStyle='#f5deb3'; ctx.beginPath(); ctx.arc(w*0.5,h*0.55,60,0,6.283); ctx.fill();
+    ctx.fillStyle='#5c3b1a'; ctx.beginPath(); ctx.arc(w*0.43,h*0.45,30,0,6.283); ctx.fill();
+    ctx.beginPath(); ctx.arc(w*0.57,h*0.45,30,0,6.283); ctx.fill();
+    ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(w*0.5,h*0.58,12,0,6.283); ctx.fill();
+  }else if(kind==='checker'){
+    const s=32; for(let y=0;y<h;y+=s){ for(let x=0;x<w;x+=s){ const on=((x/s+y/s)|0)%2===0; ctx.fillStyle=on?'#a78bfa':'#1e293b'; ctx.fillRect(x,y,s,s); }}
+  }else if(kind==='gradient'){
+    const g=ctx.createLinearGradient(0,0,w,h); g.addColorStop(0,'#0ea5e9'); g.addColorStop(1,'#1e293b'); ctx.fillStyle=g; ctx.fillRect(0,0,w,h);
+  }
+}
+function embedImage(ctx, grid=8, dec=2){
+  const {width:w, height:h}=ctx.canvas;
+  const cw=Math.floor(w/grid), ch=Math.floor(h/grid);
+  const out=[];
+  for(let gy=0;gy<grid;gy++){
+    for(let gx=0;gx<grid;gx++){
+      const x=gx*cw, y=gy*ch;
+      const img=ctx.getImageData(x,y,cw,ch).data;
+      let R=0,G=0,B=0,cnt=img.length/4;
+      for(let i=0;i<img.length;i+=4){ R+=img[i]; G+=img[i+1]; B+=img[i+2]; }
+      R/=cnt; G/=cnt; B/=cnt;
+      const q=Math.pow(10,dec);
+      out.push(Math.round(R/255*q)/q, Math.round(G/255*q)/q, Math.round(B/255*q)/q);
+    }
+  }
+  return out;
+}
+function buildImgGallery(){
+  imgGallery.innerHTML='';
+  const kinds=['tulips','puppy','checker','gradient','tulips','checker'];
+  kinds.forEach((k,i)=>{
+    const slot=document.createElement('div'); slot.className='slot';
+    const cv=document.createElement('canvas'); cv.width=128; cv.height=86; slot.appendChild(cv);
+    const badge=document.createElement('div'); badge.className='badge'; badge.textContent = k; slot.appendChild(badge);
+    const ctx=cv.getContext('2d'); drawPreset(ctx,k);
+    imgGallery.appendChild(slot);
+  });
+}
+$('#imgRun').addEventListener('click', ()=>{
+  const grid=parseInt($('#imgGrid').value,10), dec=parseInt($('#imgQuant').value,10);
+  // Query = selected preset (draw to hidden canvas)
+  const tmp=document.createElement('canvas'); tmp.width=128; tmp.height=86; const tctx=tmp.getContext('2d');
+  drawPreset(tctx, $('#imgPreset').value);
+  const q=embedImage(tctx, grid, dec);
+  // Rank gallery by cosine
+  const slots=$$('#imgGallery .slot');
+  const scores=[];
+  slots.forEach((s,i)=>{
+    const ctx=s.querySelector('canvas').getContext('2d');
+    const v=embedImage(ctx, grid, dec);
+    scores.push({i, s:cosine(q,v)});
+  });
+  scores.sort((a,b)=>b.s-a.s);
+  // Annotate top-3
+  slots.forEach(s=> s.style.outline='none');
+  for(let r=0;r<Math.min(3,scores.length);r++){
+    const el=slots[scores[r].i];
+    el.style.outline='2px solid var(--good)'; el.style.outlineOffset='2px';
+  }
+  $('#imgOut').textContent = `Top-1 similarity: ${fmt(scores[0].s)}  • Top-3 highlighted`;
+});
+buildImgGallery();
+
+/* ================= 2) Semantic text search ================= */
+const CORPUS = [
+  "A golden retriever plays fetch in the park.",
+  "A field of purple tulips at sunrise.",
+  "People relax on a bench under trees.",
+  "Vector databases power fast nearest-neighbor search.",
+  "A puppy snoozes in a flowerbed near the fence.",
+  "Ocean waves and seagulls at the beach."
+];
+function cleanText(s){ return s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu,' ').replace(/\s+/g,' ').trim(); }
+function embedText(s, D=64){
+  s=cleanText(s);
+  const v=new Float32Array(D);
+  const toks=s.split(' ').filter(Boolean);
+  for(const t of toks){
+    let h=0; for(let i=0;i<t.length;i++) h=((h<<5)-h)+t.charCodeAt(i)|0;
+    v[Math.abs(h)%D]+=1;
+    for(let i=0;i<t.length-1;i++){ const bg=t.charCodeAt(i)*31+t.charCodeAt(i+1); v[Math.abs(bg)%D]+=0.5; }
+  }
+  let n=0; for(let i=0;i<D;i++) n+=v[i]*v[i]; n=Math.sqrt(n)||1; for(let i=0;i<D;i++) v[i]/=n;
+  return Array.from(v);
+}
+function renderCorpus(matches){
+  const list=$('#txtList'); list.innerHTML='';
+  matches.forEach(({t,score})=>{
+    const row=document.createElement('div'); row.className='item';
+    row.innerHTML = `<span>${t}</span><span class="score"><code>${fmt(score)}</code></span>`;
+    list.appendChild(row);
+  });
+}
+$('#txtRun').addEventListener('click', ()=>{
+  const D=parseInt($('#txtDims').value,10);
+  const q=embedText($('#txtQuery').value, D);
+  const ranked = CORPUS.map(t=>({t, score:cosine(q, embedText(t,D))})).sort((a,b)=>b.score-a.score);
+  renderCorpus(ranked);
+  $('#txtOut').textContent = `Top-1 similarity: ${fmt(ranked[0].score)}`;
+});
+// initial render
+renderCorpus(CORPUS.map(t=>({t,score:0})));
+
+/* ================= 3) Recommendations ================= */
+const ITEMS = [
+  { id:'m1', title:'Sunny Park Walk', tags:['dogs','outdoors','family'] },
+  { id:'m2', title:'Tulip Garden Tour', tags:['flowers','outdoors','color'] },
+  { id:'m3', title:'City Bench Stories', tags:['city','people'] },
+  { id:'m4', title:'Beach Day Vibes', tags:['ocean','outdoors'] },
+  { id:'m5', title:'Puppy Training 101', tags:['dogs','tutorial'] },
+  { id:'m6', title:'Purple Fields', tags:['flowers','landscape'] },
+];
+const TAGS = Array.from(new Set(ITEMS.flatMap(i=>i.tags)));
+function tagVec(tags){
+  const v=new Float32Array(TAGS.length);
+  tags.forEach(t=>{ const i=TAGS.indexOf(t); if(i>=0) v[i]+=1; });
+  let n=0; for(let i=0;i<v.length;i++) n+=v[i]*v[i]; n=Math.sqrt(n)||1; for(let i=0;i<v.length;i++) v[i]/=n;
+  return Array.from(v);
+}
+ITEMS.forEach(it=> it.vec = tagVec(it.tags));
+function renderRecItems(){
+  const box=$('#recItems'); box.innerHTML='';
+  ITEMS.forEach(it=>{
+    const row=document.createElement('div'); row.className='item';
+    const tags=it.tags.map(x=>`<span class="tag">${x}</span>`).join(' ');
+    row.innerHTML = `<label><input type="checkbox" value="${it.id}" /> <b>${it.title}</b></label><span>${tags}</span>`;
+    box.appendChild(row);
+  });
+}
+$('#recRun').addEventListener('click', ()=>{
+  const picked = $$('#recItems input[type=checkbox]:checked').map(x=>x.value);
+  if(picked.length===0){ $('#recResults').innerHTML='<div class="item"><span>Select a few items first.</span></div>'; return; }
+  // user profile = mean of liked item vectors
+  const prof = new Float32Array(TAGS.length);
+  picked.forEach(id=>{
+    const v = ITEMS.find(i=>i.id===id).vec;
+    for(let i=0;i<prof.length;i++) prof[i]+=v[i];
+  });
+  let n=0; for(let i=0;i<prof.length;i++) n+=prof[i]*prof[i]; n=Math.sqrt(n)||1; for(let i=0;i<prof.length;i++) prof[i]/=n;
+  const recs = ITEMS
+    .filter(i=>!picked.includes(i.id))
+    .map(i=>({i, s:cosine(prof, i.vec)}))
+    .sort((a,b)=>b.s-a.s)
+    .slice(0,3);
+  $('#recResults').innerHTML = recs.map(r=>`
+    <div class="item">
+      <span>Recommended: <b>${r.i.title}</b> — ${r.i.tags.map(x=>`<span class="tag">${x}</span>`).join(' ')}</span>
+      <span class="score"><code>${fmt(r.s)}</code></span>
+    </div>
+  `).join('');
+});
+renderRecItems();
+
+/* ================= 4) Audio match ================= */
+let audioCtx=null, analyser=null, osc=null, gain=null;
+function ensureAudio(){ if(!audioCtx) audioCtx=new (window.AudioContext||window.webkitAudioContext)(); }
+function stopAudio(){ if(osc){ osc.stop(); osc.disconnect(); osc=null; } if(gain){ gain.disconnect(); gain=null; } $('#audOut').textContent='Status: stopped'; }
+function playTone(kind){
+  ensureAudio(); stopAudio();
+  analyser = audioCtx.createAnalyser(); analyser.fftSize=2048;
+  gain = audioCtx.createGain(); gain.gain.value=0.08;
+  if(kind==='sine'){ osc=audioCtx.createOscillator(); osc.type='sine'; osc.frequency.value=440; osc.connect(gain).connect(analyser).connect(audioCtx.destination); osc.start(); }
+  if(kind==='chord'){
+    const g = audioCtx.createGain(); g.gain.value=0.08;
+    [261.63,329.63,392.00].forEach(f=>{ const o=audioCtx.createOscillator(); o.type='sine'; o.frequency.value=f; o.connect(g); o.start(); setTimeout(()=>o.stop(), 4000); });
+    g.connect(analyser).connect(audioCtx.destination);
+  }
+  if(kind==='noise'){
+    const node = audioCtx.createScriptProcessor(1024,1,1);
+    node.onaudioprocess = e => { const out=e.outputBuffer.getChannelData(0); for(let i=0;i<out.length;i++) out[i]=(Math.random()*2-1)*0.2; };
+    node.connect(audioCtx.destination);
+    const tap=audioCtx.createGain(); tap.gain.value=0.0; node.connect(tap); tap.connect(analyser);
+  }
+  $('#audOut').textContent='Status: playing '+kind;
+}
+function embedAudio(bands=64){
+  if(!analyser){ return Array.from({length:bands},()=>0); }
+  const N=analyser.frequencyBinCount; const freq=new Uint8Array(N);
+  analyser.getByteFrequencyData(freq);
+  const out=new Array(bands).fill(0);
+  for(let i=0;i<bands;i++){
+    const a=Math.floor(i*N/bands), b=Math.floor((i+1)*N/bands);
+    let sum=0; for(let j=a;j<b;j++) sum+=freq[j];
+    out[i]=sum/Math.max(1,(b-a))/255;
+  }
+  // L2 normalize
+  let n=0; for(let i=0;i<bands;i++) n+=out[i]*out[i]; n=Math.sqrt(n)||1; for(let i=0;i<bands;i++) out[i]/=n;
+  return out;
+}
+function drawBars(cv, vec){
+  const ctx=cv.getContext('2d'); const w=cv.width,h=cv.height; ctx.clearRect(0,0,w,h);
+  const m=16, n=vec.length, bw=Math.max(1,(w-2*m)/n), max=Math.max(1e-9,...vec);
+  ctx.fillStyle='#0f1629'; ctx.fillRect(0,0,w,h);
+  ctx.fillStyle='var(--bar)';
+  for(let i=0;i<n;i++){ const v=vec[i]/max, bh=v*(h-2*m); ctx.fillRect(m+i*bw, h-m-bh, bw*0.9, bh); }
+}
+$('#audSine').addEventListener('click', ()=>playTone('sine'));
+$('#audChord').addEventListener('click', ()=>playTone('chord'));
+$('#audNoise').addEventListener('click', ()=>playTone('noise'));
+$('#audSnap').addEventListener('click', ()=>{
+  const bands=parseInt($('#audBands').value,10);
+  const v=embedAudio(bands); drawBars($('#audChart'), v);
+  // Compare to reference embeddings (sine, chord, noise) synthesized quickly
+  const refs = {
+    sine: Array.from({length:bands}, (_,i)=> i===Math.floor(bands*0.1)?1:0),
+    chord: Array.from({length:bands}, (_,i)=> (i%10===0)?0.6:0.02),
+    noise: Array.from({length:bands}, ()=>Math.random())
+  };
+  const scores = Object.entries(refs).map(([k,vec])=>({k, s:cosine(v,vec)})).sort((a,b)=>b.s-a.s);
+  $('#audOut').textContent = `Snapshot matched: ${scores[0].k} (cos=${fmt(scores[0].s)})`;
+});
+
+/* ================= 5) Anomaly detection ================= */
+function randn(){ // Box-Muller
+  let u=0,v=0,s=0; do{ u=Math.random()*2-1; v=Math.random()*2-1; s=u*u+v*v; }while(!s||s>=1);
+  const mul=Math.sqrt(-2*Math.log(s)/s); return u*mul;
+}
+function genAnom(n=400, pct=5){
+  const pts=[];
+  // main cluster around (0,0)
+  for(let i=0;i<n;i++){ pts.push([randn()*0.6, randn()*0.4]); }
+  // outliers
+  const m=Math.round(n*pct/100);
+  for(let i=0;i<m;i++){ pts.push([ (Math.random()*2-1)*3, (Math.random()*2-1)*3 ]); }
+  return pts;
+}
+function zScores(pts){
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  const mx=xs.reduce((a,b)=>a+b,0)/xs.length, my=ys.reduce((a,b)=>a+b,0)/ys.length;
+  const sx=Math.sqrt(xs.reduce((a,b)=>a+(b-mx)*(b-mx),0)/xs.length)||1;
+  const sy=Math.sqrt(ys.reduce((a,b)=>a+(b-my)*(b-my),0)/ys.length)||1;
+  return pts.map(([x,y])=> Math.sqrt(((x-mx)/sx)**2 + ((y-my)/sy)**2));
+}
+function drawScatter(cv, pts, z, thresh=2.2){
+  const ctx=cv.getContext('2d'), w=cv.width, h=cv.height; ctx.clearRect(0,0,w,h);
+  // rescale to canvas
+  let minx=+Infinity,maxx=-Infinity,miny=+Infinity,maxy=-Infinity;
+  pts.forEach(([x,y])=>{ if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; });
+  const pad=20, sx=(w-2*pad)/(maxx-minx||1), sy=(h-2*pad)/(maxy-miny||1);
+  function P([x,y]){ return [ pad+(x-minx)*sx, h-(pad+(y-miny)*sy) ]; }
+  // axes
+  ctx.strokeStyle='#1a2742'; ctx.beginPath(); ctx.moveTo(pad, h-pad); ctx.lineTo(w-pad,h-pad); ctx.moveTo(pad,pad); ctx.lineTo(pad,h-pad); ctx.stroke();
+  // points
+  for(let i=0;i<pts.length;i++){
+    const [px,py]=P(pts[i]); const out = z[i]>thresh;
+    ctx.fillStyle = out ? 'var(--bad)' : '#bcd1f0';
+    ctx.beginPath(); ctx.arc(px,py, out?3.2:2.4, 0, 6.283); ctx.fill();
+  }
+}
+function runAnom(){
+  const n=parseInt($('#anomN').value,10), pct=parseInt($('#anomPct').value,10), t=parseFloat($('#anomZ').value);
+  const pts=genAnom(n,pct); const z=zScores(pts); drawScatter($('#anomCv'), pts, z, t);
+  const count=z.filter(v=>v>t).length;
+  $('#anomOut').textContent = `Flagged ${count} anomalies (threshold z>${t})`;
+}
+$('#anomRun').addEventListener('click', runAnom);
+// bootstrap defaults
+runAnom();
+</script>
+</body>
+</html>
