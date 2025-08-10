@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dimensionality Slider — PCA & Distance Concentration</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff;
+    --line:#223252; --card:#141b2f; --grid:#1a2742;
+    --c1:#7dd3fc; --c2:#86efac; --c3:#fca5a5; --bars:#bcd1f0;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px}
+  h1{font-size:22px;margin:0 0 6px}
+  .note{color:var(--muted);margin-bottom:14px}
+  .panel{display:grid;grid-template-columns:1.2fr 0.8fr;gap:16px}
+  @media (max-width:1000px){ .panel{grid-template-columns:1fr;}}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .box h2{font-size:16px;margin:0 0 8px}
+  .controls .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:6px 0}
+  label{color:#cbd6ea}
+  input[type=range]{width:220px}
+  select, input[type=number], button{
+    background:#0f1629;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px
+  }
+  button{cursor:pointer}
+  .canvasWrap{display:grid;gap:12px}
+  .legend{display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--muted)}
+  .key{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:4px;border:1px solid var(--line)}
+  .s1{background:var(--c1)} .s2{background:var(--c2)} .s3{background:var(--c3)}
+  canvas{width:100%;height:420px;background:linear-gradient(0deg,transparent 49%,var(--grid) 50%,transparent 51%),linear-gradient(90deg,transparent 49%,var(--grid) 50%,transparent 51%);background-color:var(--card);border:1px solid var(--line);border-radius:12px}
+  .small{height:260px}
+  .stat{color:#b9c9e9;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Dimensionality & the Curse of Dimensionality</h1>
+  <div class="note">
+    Use the slider to change the number of <b>dimensions (D)</b> for synthetic clusters. We project to 2D using PCA for visualization.
+    The histogram shows the distribution of <b>pairwise distances in the original D-dim space</b> (Euclidean or Cosine), illustrating how distances concentrate as D grows.
+  </div>
+
+  <div class="panel">
+    <div class="box">
+      <h2>Controls</h2>
+      <div class="controls">
+        <div class="row">
+          <label for="dims">Dimensions (D): <b id="dimsVal">8</b></label>
+          <input id="dims" type="range" min="2" max="128" step="1" value="8" />
+        </div>
+        <div class="row">
+          <label>Points per cluster:
+            <input id="ppc" type="number" min="20" max="400" step="10" value="100" />
+          </label>
+          <label>Clusters:
+            <input id="clusters" type="number" min="2" max="5" step="1" value="3" />
+          </label>
+          <label>Spread (σ):
+            <input id="spread" type="number" min="0.02" max="0.60" step="0.02" value="0.18" />
+          </label>
+        </div>
+        <div class="row">
+          <label>Distance metric:
+            <select id="metric">
+              <option value="euclid">Euclidean</option>
+              <option value="cosine">Cosine similarity</option>
+            </select>
+          </label>
+          <label>Pairs sampled:
+            <input id="pairs" type="number" min="300" max="8000" step="100" value="3000" />
+          </label>
+          <button id="regen">Regenerate</button>
+        </div>
+        <div class="row stat" id="stats">—</div>
+      </div>
+
+      <div class="canvasWrap">
+        <div class="legend">
+          <span class="key"><span class="sw s1"></span>Cluster 1</span>
+          <span class="key"><span class="sw s2"></span>Cluster 2</span>
+          <span class="key"><span class="sw s3"></span>Cluster 3</span>
+          <span class="key">• PCA projection of D-dim vectors → 2D</span>
+        </div>
+        <canvas id="scatter" width="800" height="420" aria-label="PCA scatter plot"></canvas>
+        <div class="legend"><span>Histogram of pairwise distances in original D dimensions (sampled)</span></div>
+        <canvas class="small" id="hist" width="800" height="260" aria-label="Distance histogram"></canvas>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>What to Notice</h2>
+      <ul>
+        <li>As <b>D increases</b>, the distance histogram tends to <b>narrow</b> (values concentrate).</li>
+        <li>Euclidean distances often cluster around a typical value in high D.</li>
+        <li>Cosine similarity focuses on <b>direction</b> more than magnitude; distributions look different.</li>
+        <li>PCA preserves the most variance in 2D, but some cluster overlap is inevitable after projection.</li>
+      </ul>
+      <h2 style="margin-top:12px">Tips</h2>
+      <ul>
+        <li>Increase <b>Spread (σ)</b> to make clusters fuzzier.</li>
+        <li>Increase <b>Points per cluster</b> for smoother histograms.</li>
+        <li>Try switching to <b>Cosine</b> to compare behavior.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ========= Utilities ========= */
+const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+const randn=(()=>{ // Box-Muller
+  let spare=null;
+  return function(){
+    if(spare!==null){ const v=spare; spare=null; return v; }
+    let u=0,v=0,s=0;
+    do{ u=Math.random()*2-1; v=Math.random()*2-1; s=u*u+v*v; }while(!s||s>=1);
+    const mul=Math.sqrt(-2*Math.log(s)/s);
+    spare=v*mul; return u*mul;
+  };
+})();
+
+function mean(arr){ const m=new Array(arr[0].length).fill(0); for(const r of arr){ for(let j=0;j<m.length;j++) m[j]+=r[j]; } for(let j=0;j<m.length;j++) m[j]/=arr.length; return m; }
+function center(X){ const mu=mean(X); return {Xc:X.map(r=>r.map((v,j)=>v-mu[j])), mu}; }
+function transpose(M){ const r=M.length,c=M[0].length; const T=Array.from({length:c},()=>new Array(r)); for(let i=0;i<r;i++) for(let j=0;j<c;j++) T[j][i]=M[i][j]; return T; }
+function matvec(M,v){ const out=new Array(M.length).fill(0); for(let i=0;i<M.length;i++){ let s=0; const row=M[i]; for(let j=0;j<row.length;j++) s+=row[j]*v[j]; out[i]=s; } return out; }
+function dot(a,b){ let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; }
+function norm(v){ return Math.hypot.apply(null,v); }
+function scale(v,a){ return v.map(x=>x*a); }
+function sub(a,b){ return a.map((x,i)=>x-b[i]); }
+function add(a,b){ return a.map((x,i)=>x+b[i]); }
+
+/* Covariance: (X^T X)/(n-1), X is n x d centered */
+function covariance(Xc){
+  const n=Xc.length, d=Xc[0].length;
+  const C=Array.from({length:d},()=>new Array(d).fill(0));
+  for(let i=0;i<n;i++){
+    const row=Xc[i];
+    for(let a=0;a<d;a++){
+      const ra=row[a];
+      for(let b=a;b<d;b++){
+        const v=ra*row[b];
+        C[a][b]+=v; if(b!==a) C[b][a]+=v;
+      }
+    }
+  }
+  const s=1/(n-1);
+  for(let a=0;a<d;a++) for(let b=0;b<d;b++) C[a][b]*=s;
+  return C;
+}
+
+/* Power iteration to get top eigenvector; returns {vec, val} */
+function topEigen(C, iters=80){
+  const d=C.length;
+  let v=new Array(d).fill(0).map(()=>Math.random());
+  let vn=norm(v); if(vn===0) v[0]=1; else v=scale(v,1/vn);
+  for(let t=0;t<iters;t++){
+    let w=matvec(C,v);
+    const nrm=norm(w); if(nrm===0) break;
+    v=scale(w,1/nrm);
+  }
+  const val=dot(v, matvec(C,v));
+  return {vec:v, val};
+}
+/* Deflation: C2 = C - lambda * v v^T */
+function deflate(C, v, lambda){
+  const d=C.length;
+  const C2=Array.from({length:d},()=>new Array(d));
+  for(let i=0;i<d;i++){
+    for(let j=0;j<d;j++){
+      C2[i][j]=C[i][j] - lambda * v[i]*v[j];
+    }
+  }
+  return C2;
+}
+
+/* PCA: returns {Y(n x 2), components (d x 2)} projecting centered Xc */
+function pca2(Xc){
+  const C=covariance(Xc);
+  const e1=topEigen(C);
+  const C2=deflate(C, e1.vec, e1.val);
+  const e2=topEigen(C2);
+  const comps=[e1.vec, e2.vec]; // two d-vectors
+
+  // project: Y = Xc * [v1 v2]  (n x d) * (d x 2) = (n x 2)
+  const n=Xc.length, d=Xc[0].length;
+  const Y=new Array(n);
+  for(let i=0;i<n;i++){
+    const row=Xc[i];
+    const y1=dot(row, comps[0]);
+    const y2=dot(row, comps[1]);
+    Y[i]=[y1,y2];
+  }
+  return {Y, comps};
+}
+
+/* Distance metrics on original D-dim space */
+function euclid(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; } return Math.sqrt(s); }
+function cosineSim(a,b){ let num=0,na=0,nb=0; for(let i=0;i<a.length;i++){ num+=a[i]*b[i]; na+=a[i]*a[i]; nb+=b[i]*b[i]; } na=Math.sqrt(na); nb=Math.sqrt(nb); if(na===0||nb===0) return 0; return num/(na*nb); }
+
+/* ========= Data generation ========= */
+function generateData({D=8, clusters=3, per=100, spread=0.18}){
+  const centers=[];
+  for(let k=0;k<clusters;k++){
+    const c=new Array(D).fill(0).map(()=>Math.random()); // random in [0,1]
+    centers.push(c);
+  }
+  const colors=[getComputedStyle(document.documentElement).getPropertyValue('--c1').trim(),
+                getComputedStyle(document.documentElement).getPropertyValue('--c2').trim(),
+                getComputedStyle(document.documentElement).getPropertyValue('--c3').trim()];
+  const X=[], labels=[], colrs=[];
+  for(let k=0;k<clusters;k++){
+    for(let i=0;i<per;i++){
+      const pt=new Array(D);
+      for(let d=0;d<D;d++){
+        pt[d]=clamp(centers[k][d] + randn()*spread, 0, 1);
+      }
+      X.push(pt); labels.push(k); colrs.push(colors[k%colors.length]);
+    }
+  }
+  return {X, labels, colrs};
+}
+
+/* ========= Rendering ========= */
+const dimsEl = document.getElementById('dims');
+const dimsVal= document.getElementById('dimsVal');
+const ppcEl  = document.getElementById('ppc');
+const clEl   = document.getElementById('clusters');
+const spEl   = document.getElementById('spread');
+const metricEl=document.getElementById('metric');
+const pairsEl= document.getElementById('pairs');
+const regenEl= document.getElementById('regen');
+const statsEl= document.getElementById('stats');
+
+const scat   = document.getElementById('scatter');
+const sctx   = scat.getContext('2d');
+const hist   = document.getElementById('hist');
+const hctx   = hist.getContext('2d');
+
+let DATA=null, PCA=null;
+
+function rescaleToCanvas(Y, pad=30){
+  // map Y (n x 2) to canvas coords with margin
+  const w=scat.width, h=scat.height;
+  let minx=+Infinity,maxx=-Infinity,miny=+Infinity,maxy=-Infinity;
+  for(const [x,y] of Y){ if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; }
+  const sx=(w-2*pad)/Math.max(1e-9, maxx-minx);
+  const sy=(h-2*pad)/Math.max(1e-9, maxy-miny);
+  const s=Math.min(sx,sy);
+  const tx=(w - s*(minx+maxx))/2;
+  const ty=(h - s*(miny+maxy))/2;
+  const P=Y.map(([x,y])=>[s*x+tx, h-(s*y+ty)]);
+  return P;
+}
+
+function drawScatter(Y2, colors){
+  sctx.clearRect(0,0,scat.width,scat.height);
+  // axes crosshair
+  sctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--grid').trim();
+  sctx.lineWidth=1;
+  sctx.beginPath(); sctx.moveTo(scat.width/2,0); sctx.lineTo(scat.width/2,scat.height); sctx.stroke();
+  sctx.beginPath(); sctx.moveTo(0,scat.height/2); sctx.lineTo(scat.width,scat.height/2); sctx.stroke();
+
+  const P=rescaleToCanvas(Y2);
+  sctx.globalAlpha=0.95;
+  for(let i=0;i<P.length;i++){
+    const [x,y]=P[i];
+    sctx.fillStyle=colors[i];
+    sctx.beginPath(); sctx.arc(x,y,4,0,Math.PI*2); sctx.fill();
+  }
+  sctx.globalAlpha=1;
+}
+
+function samplePairs(n, maxPairs){
+  const pairs=[];
+  const total = Math.min(maxPairs, (n*(n-1))/2);
+  while(pairs.length<total){
+    const i=Math.floor(Math.random()*n);
+    const j=Math.floor(Math.random()*n);
+    if(i===j) continue;
+    const a=Math.min(i,j), b=Math.max(i,j);
+    const key=(a<<20)+b;
+    if(!pairs._set) pairs._set=new Set();
+    if(pairs._set.has(key)) continue;
+    pairs._set.add(key);
+    pairs.push([a,b]);
+  }
+  return pairs;
+}
+
+function drawHist(vals, {isCosine=false}={}){
+  hctx.clearRect(0,0,hist.width,hist.height);
+  if(vals.length===0) return;
+  const bins=40;
+  let min=Math.min(...vals), max=Math.max(...vals);
+  if(isCosine){ min=-1; max=1; } // fixed range for cosine similarity
+  const edges = new Array(bins+1);
+  for(let i=0;i<=bins;i++) edges[i]=min + (max-min)*(i/bins);
+  const counts = new Array(bins).fill(0);
+  for(const v of vals){
+    let idx=Math.floor((v-min)/(max-min)*bins);
+    if(idx<0) idx=0; if(idx>=bins) idx=bins-1;
+    counts[idx]++;
+  }
+  const cw = hist.width/bins;
+  const maxCount = Math.max(...counts);
+  hctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--bars').trim();
+  for(let i=0;i<bins;i++){
+    const h = (counts[i]/maxCount)*(hist.height-30);
+    hctx.fillRect(i*cw+1, hist.height - h - 20, cw-2, h);
+  }
+  // axes labels
+  hctx.fillStyle="#b9c9e9"; hctx.font="12px system-ui";
+  hctx.fillText(isCosine? "Cosine similarity" : "Euclidean distance", 10, 14);
+  hctx.fillText("min: "+min.toFixed(3)+"   max: "+max.toFixed(3), 10, hist.height-4);
+}
+
+function update(){
+  const D=parseInt(dimsEl.value,10);
+  const per=parseInt(ppcEl.value,10);
+  const K=parseInt(clEl.value,10);
+  const sigma=parseFloat(spEl.value);
+  dimsVal.textContent=D.toString();
+
+  DATA = generateData({D, clusters:K, per, spread:sigma});
+  const {X, labels, colrs}=DATA;
+  const {Xc}=center(X);
+  const {Y}=pca2(Xc); // n x 2
+  drawScatter(Y, colrs);
+
+  // distances in original D space
+  const metric=metricEl.value;
+  const pairs=parseInt(pairsEl.value,10);
+  const pr = samplePairs(X.length, pairs);
+  const vals=[];
+  if(metric==='euclid'){
+    for(const [i,j] of pr) vals.push(euclid(X[i],X[j]));
+    drawHist(vals,{isCosine:false});
+    const m=vals.reduce((a,b)=>a+b,0)/vals.length;
+    const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length);
+    statsEl.textContent=`Euclidean — mean: ${m.toFixed(3)}  std: ${sd.toFixed(3)}  (pairs: ${vals.length})`;
+  } else {
+    for(const [i,j] of pr) vals.push(cosineSim(X[i],X[j]));
+    drawHist(vals,{isCosine:true});
+    const m=vals.reduce((a,b)=>a+b,0)/vals.length;
+    const sd=Math.sqrt(vals.reduce((a,b)=>a+(b-m)*(b-m),0)/vals.length);
+    statsEl.textContent=`Cosine similarity — mean: ${m.toFixed(3)}  std: ${sd.toFixed(3)}  (pairs: ${vals.length})`;
+  }
+}
+
+function throttle(fn, ms){
+  let t=0, id=null, lastArgs=null;
+  return function(...args){
+    const now=Date.now();
+    lastArgs=args;
+    if(now-t>ms){ t=now; fn(...args); }
+    else{
+      clearTimeout(id);
+      id=setTimeout(()=>{ t=Date.now(); fn(...lastArgs); }, ms);
+    }
+  };
+}
+
+/* ========= Hooks ========= */
+const onChange=throttle(update, 60);
+[dimsEl, ppcEl, clEl, spEl, metricEl, pairsEl].forEach(el=>{
+  el.addEventListener('input', onChange);
+  el.addEventListener('change', onChange);
+});
+regenEl.addEventListener('click', update);
+
+/* ========= Init ========= */
+(function init(){
+  // ensure canvas backing size matches CSS size for crispness
+  const resizeCanvas=(cv)=>{
+    const rect=cv.getBoundingClientRect();
+    const ratio=window.devicePixelRatio||1;
+    cv.width = Math.floor(rect.width*ratio);
+    cv.height= Math.floor(rect.height*ratio);
+    const ctx=cv.getContext('2d');
+    ctx.setTransform(ratio,0,0,ratio,0,0);
+  };
+  const ro=new ResizeObserver(()=>{ resizeCanvas(scat); resizeCanvas(hist); update();});
+  ro.observe(scat); ro.observe(hist);
+  resizeCanvas(scat); resizeCanvas(hist);
+  update();
+})();
+</script>
+</body>
+</html>
