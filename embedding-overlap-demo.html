@@ -36,6 +36,23 @@
   .mini .slot{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:#0f1629;position:relative}
   .mini canvas{width:100%;height:86px;display:block}
   .badge{position:absolute;right:6px;top:6px;background:#0f1629;border:1px solid var(--line);border-radius:8px;padding:1px 6px;font-size:12px}
+  /* --- Responsive fit for narrower columns --- */
+  .wrap { max-width: 900px; width: 100%; }  /* was 1100px */
+  .grid { grid-template-columns: 1fr 1fr; } /* simpler split = fewer overflows */
+  @media (max-width: 860px){
+    .grid { grid-template-columns: 1fr; }   /* stack on smaller embeds */
+  }
+  
+  /* Canvas + thumbs scale to container width cleanly */
+  .thumb { aspect-ratio: 1 / 1; }
+  canvas.thumbCv { width: 100%; height: auto; } /* keep square via parent aspect-ratio */
+  
+  /* Heat strip can wrap and not blow out width */
+  .heat { grid-auto-flow: row; grid-template-columns: repeat(auto-fill, 10px); }
+  
+  /* Tighten spacing a bit */
+  .box { padding: 10px; }
+  .note { margin-bottom: 10px; }
 </style>
 </head>
 <body>
