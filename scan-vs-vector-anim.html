@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SQL Table Scan vs Vector DB (IVF) — Side-by-Side Animation</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff;
+    --line:#223252; --card:#141b2f; --grid:#1a2742;
+    --sql:#fca5a5; --ivf:#6ee7b7; --probe:#fde68a; --hit:#93c5fd; --miss:#334155;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px}
+  h1{font-size:22px;margin:0 0 6px}
+  .note{color:var(--muted);margin:0 0 12px}
+  .panel{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:1000px){.panel{grid-template-columns:1fr}}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .box h2{font-size:16px;margin:0 0 8px}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 14px}
+  label{color:#cbd6ea}
+  input[type=number], select, button, input[type=range]{background:#0f1629;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  input[type=range]{width:180px}
+  button{cursor:pointer}
+  .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+  .stats{color:#cfe0ff;font-size:13px}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:#0f1629;color:#cbd6ea}
+  .boards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .board{border:1px solid var(--line);border-radius:12px;background:#0f1629;padding:10px}
+  .title{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+  .gridview{display:grid;grid-template-columns:repeat(24,1fr);gap:3px}
+  .cell{aspect-ratio:1/1;border-radius:6px;background:#0e1726}
+  .cell.sql.scan{background:var(--sql)}
+  .cell.ivf.probe{background:var(--probe)}
+  .cell.ivf.scan{background:var(--ivf)}
+  .cell.hit{box-shadow:0 0 0 2px var(--hit) inset}
+  .legend{display:flex;gap:10px;color:#9fb1d3;font-size:12px;margin-top:6px;flex-wrap:wrap}
+  .key{display:inline-flex;align-items:center;gap:6px}
+  .sw{width:14px;height:14px;border-radius:4px;border:1px solid var(--line)}
+  .sw.sql{background:var(--sql)} .sw.ivf{background:var(--ivf)} .sw.probe{background:var(--probe)} .sw.hit{background:#0e1726;box-shadow:0 0 0 2px var(--hit) inset}
+  .mini{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+  code{background:#0b162b;border:1px solid var(--line);border-radius:8px;padding:1px 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SQL Table Scan vs Vector DB (IVF)</h1>
+  <div class="note">Press <b>Build & Prime</b>, then <b>Play</b>. Left: SQL linear scan touches every row. Right: Vector DB (IVF) jumps to a few lists (<code>nprobe</code>) and scans only those. We compute recall@K vs exact brute force.</div>
+
+  <div class="box">
+    <h2>Controls</h2>
+    <div class="controls">
+      <label>N points <input id="N" type="number" min="600" max="20000" step="200" value="2400"/></label>
+      <label>D dims <input id="D" type="number" min="8" max="256" step="8" value="64"/></label>
+      <label>K <input id="K" type="number" min="1" max="50" step="1" value="10"/></label>
+      <label>L lists <input id="L" type="number" min="4" max="256" step="4" value="48"/></label>
+      <label>nprobe <input id="nprobe" type="number" min="1" max="256" step="1" value="6"/></label>
+      <label>Metric
+        <select id="metric"><option value="cosine">Cosine</option><option value="euclid">Euclidean</option></select>
+      </label>
+      <label>Speed <input id="speed" type="range" min="0" max="100" value="70"/></label>
+      <button id="build">Build & Prime</button>
+      <button id="play">Play</button>
+      <button id="pause">Pause</button>
+      <button id="reset">Reset</button>
+    </div>
+
+    <div class="boards">
+      <div class="board" id="sqlBoard">
+        <div class="title">
+          <div><b>SQL Table Scan</b></div>
+          <div class="stats" id="sqlStats">—</div>
+        </div>
+        <div id="sqlGrid" class="gridview" aria-label="SQL rows"></div>
+        <div class="legend">
+          <span class="key"><span class="sw sql"></span> scanned row</span>
+          <span class="key"><span class="sw hit"></span> ground-truth Top-K hit</span>
+        </div>
+      </div>
+
+      <div class="board" id="ivfBoard">
+        <div class="title">
+          <div><b>Vector DB (IVF)</b></div>
+          <div class="stats" id="ivfStats">—</div>
+        </div>
+        <div id="ivfGrid" class="gridview" aria-label="IVF rows"></div>
+        <div class="legend">
+          <span class="key"><span class="sw probe"></span> probed list</span>
+          <span class="key"><span class="sw ivf"></span> scanned candidate</span>
+          <span class="key"><span class="sw hit"></span> ground-truth Top-K hit</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:10px">
+      <span class="pill" id="summary">Ready.</span>
+      <span class="pill" id="recall">Recall@K: —</span>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ======= Utilities ======= */
+const rnd = ()=>Math.random()*2-1;
+function l2(v){ let s=0; for(let i=0;i<v.length;i++) s+=v[i]*v[i]; return Math.sqrt(s); }
+function norm(v){ const n=l2(v)||1; for(let i=0;i<v.length;i++) v[i]/=n; return v; }
+function euclid(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; } return Math.sqrt(s); }
+function cosine(a,b){
+  let num=0,na=0,nb=0;
+  for(let i=0;i<a.length;i++){ const x=a[i],y=b[i]; num+=x*y; na+=x*x; nb+=y*y; }
+  return (na===0||nb===0)? 0 : num/(Math.sqrt(na)*Math.sqrt(nb));
+}
+function chunk(arr, size){ const out=[]; for(let i=0;i<arr.length;i+=size) out.push(arr.slice(i,i+size)); return out; }
+
+/* ======= DOM ======= */
+const NEl=$('#N'), DEl=$('#D'), KEl=$('#K'), LEl=$('#L'), nprobeEl=$('#nprobe'), metricEl=$('#metric'), speedEl=$('#speed');
+const buildBtn=$('#build'), playBtn=$('#play'), pauseBtn=$('#pause'), resetBtn=$('#reset');
+const sqlGrid=$('#sqlGrid'), ivfGrid=$('#ivfGrid'), sqlStats=$('#sqlStats'), ivfStats=$('#ivfStats'), summaryEl=$('#summary'), recallEl=$('#recall');
+
+function $(s){ return document.querySelector(s); }
+
+/* ======= Data & Index ======= */
+let DATA=null, IVF=null, GT=null;
+let sqlCells=[], ivfCells=[];
+let anim=null;
+
+function genData(N,D,metric){
+  const X=new Array(N);
+  for(let i=0;i<N;i++){
+    const v=new Float32Array(D);
+    for(let j=0;j<D;j++) v[j]=rnd();
+    if(metric==='cosine') norm(v);
+    X[i]=v;
+  }
+  // random query near a random point
+  const q=new Float32Array(X[Math.floor(Math.random()*N)]);
+  for(let j=0;j<D;j++) q[j]+= (Math.random()*2-1)*0.02;
+  if(metric==='cosine') norm(q);
+  return {X,N,D,metric,q};
+}
+
+function bruteTopK({X,N,metric}, q, K){
+  const scores = new Float32Array(N);
+  for(let i=0;i<N;i++){
+    scores[i] = (metric==='cosine') ? cosine(q,X[i]) : euclid(q,X[i]);
+  }
+  const idx=[...Array(N).keys()];
+  idx.sort((a,b)=> metric==='cosine' ? (scores[b]-scores[a]) : (scores[a]-scores[b]));
+  return idx.slice(0,K);
+}
+
+function buildIVF({X,N,D,metric}, L=64, iters=6){
+  // init centroids with random samples
+  const cents = new Array(L); const used=new Set();
+  for(let c=0;c<L;c++){ let p=Math.floor(Math.random()*N); while(used.has(p)) p=Math.floor(Math.random()*N); used.add(p); cents[c]=new Float32Array(X[p]); if(metric==='cosine') norm(cents[c]); }
+  const assign = new Int32Array(N);
+
+  for(let it=0; it<iters; it++){
+    // assign
+    for(let i=0;i<N;i++){
+      let best=-1, bestScore = (metric==='cosine'? -Infinity : +Infinity);
+      for(let c=0;c<L;c++){
+        const s = (metric==='cosine') ? cosine(X[i],cents[c]) : euclid(X[i],cents[c]);
+        if(metric==='cosine'){ if(s>bestScore){bestScore=s; best=c;} }
+        else{ if(s<bestScore){bestScore=s; best=c;} }
+      }
+      assign[i]=best;
+    }
+    // update
+    const sums=Array.from({length:L},()=>new Float64Array(D));
+    const counts=new Int32Array(L);
+    for(let i=0;i<N;i++){ const g=assign[i]; counts[g]++; const a=X[i]; const s=sums[g]; for(let d=0;d<D;d++) s[d]+=a[d]; }
+    for(let c=0;c<L;c++){
+      if(counts[c]===0) continue;
+      const inv=1/counts[c], cen=cents[c];
+      for(let d=0;d<D;d++) cen[d]=sums[c][d]*inv;
+      if(metric==='cosine') norm(cen);
+    }
+  }
+  const lists=Array.from({length:L},()=>[]);
+  for(let i=0;i<N;i++) lists[assign[i]].push(i);
+  return {centroids:cents, lists, assign};
+}
+
+/* ======= Grids ======= */
+function buildGrids(N){
+  sqlGrid.innerHTML=''; ivfGrid.innerHTML='';
+  // Both grids show all N rows, so we can color what each method touches differently
+  sqlCells = new Array(N);
+  ivfCells = new Array(N);
+  for(let i=0;i<N;i++){
+    const a=document.createElement('div'); a.className='cell'; a.dataset.idx=i; sqlGrid.appendChild(a); sqlCells[i]=a;
+    const b=document.createElement('div'); b.className='cell'; b.dataset.idx=i; ivfGrid.appendChild(b); ivfCells[i]=b;
+  }
+}
+
+/* ======= Animation engine ======= */
+let state = { running:false, t0:0, sqlIdx:0, ivfStep:0, ivfOrder:[], ivfCand:[], hits:new Set(), scannedSQL:0, scannedIVF:0 };
+
+function highlightGroundTruth(){
+  // mark Top-K hits (for visual reference) in both grids
+  GT.forEach(i=>{
+    sqlCells[i].classList.add('hit');
+    ivfCells[i].classList.add('hit');
+  });
+}
+
+function prepareIVFRun(){
+  const {q, metric} = DATA;
+  const L = IVF.centroids.length;
+  const cScores = new Array(L);
+  for(let c=0;c<L;c++){
+    cScores[c] = (metric==='cosine') ? cosine(q, IVF.centroids[c]) : euclid(q, IVF.centroids[c]);
+  }
+  const cIdx=[...Array(L).keys()];
+  cIdx.sort((a,b)=> metric==='cosine' ? (cScores[b]-cScores[a]) : (cScores[a]-cScores[b]));
+  const nprobe = Math.min(parseInt(nprobeEl.value,10), L);
+  const probe = cIdx.slice(0, nprobe);
+  // visualization: paint probed lists pale first
+  probe.forEach(c=>{
+    for(const id of IVF.lists[c]) ivfCells[id].classList.add('ivf','probe');
+  });
+  // candidate scan order
+  const cand=[];
+  probe.forEach(c=>{
+    const list = IVF.lists[c];
+    // interleave by chunks so it "feels" like scanning across lists
+    for(const id of list) cand.push(id);
+  });
+  state.ivfOrder = cand;
+  state.ivfCand = [];
+}
+
+function stepOnce(){
+  const speed = parseInt(speedEl.value,10); // 0..100
+  const delay = 8 + (100-speed)*2; // smaller delay = faster
+
+  // SQL: scan next row
+  if(state.sqlIdx < DATA.N){
+    sqlCells[state.sqlIdx].classList.add('sql','scan');
+    state.scannedSQL++;
+    state.sqlIdx++;
+  }
+
+  // IVF: scan next candidate in chosen lists
+  if(state.ivfStep < state.ivfOrder.length){
+    const id = state.ivfOrder[state.ivfStep++];
+    ivfCells[id].classList.add('ivf','scan');
+    state.ivfCand.push(id);
+    state.scannedIVF++;
+  }
+
+  // update stats
+  sqlStats.textContent = `scanned ${state.scannedSQL}/${DATA.N}`;
+  ivfStats.textContent = `scanned ${state.scannedIVF}/${DATA.N}  •  lists probed: ${Math.min(parseInt(nprobeEl.value,10), IVF.centroids.length)}`;
+
+  // stop condition
+  if(state.sqlIdx >= DATA.N && state.ivfStep >= state.ivfOrder.length){
+    state.running=false;
+    clearInterval(anim);
+    evaluateRecall();
+    summaryEl.textContent = `Done. SQL touched all ${DATA.N} rows; IVF scanned ~${state.scannedIVF}.`;
+  }
+}
+
+function evaluateRecall(){
+  // compute Top-K among scanned IVF candidates and compare to ground truth Top-K
+  const K = parseInt(KEl.value,10);
+  const {X, metric, q} = DATA;
+  const C = state.ivfCand;
+  // if no candidates scanned (nprobe=0), recall is 0
+  if(C.length===0){ recallEl.textContent = `Recall@${K}: 0.0%`; return; }
+
+  const scores = new Array(C.length);
+  for(let i=0;i<C.length;i++){
+    scores[i] = (metric==='cosine') ? cosine(q,X[C[i]]) : euclid(q,X[C[i]]);
+  }
+  const order = [...Array(C.length).keys()].sort((i,j)=> metric==='cosine' ? (scores[j]-scores[i]) : (scores[i]-scores[j]));
+  const annTop = order.slice(0,K).map(i=> C[i]);
+  const hitSet = new Set(GT);
+  let hit=0; for(const id of annTop){ if(hitSet.has(id)) hit++; }
+  const recall = hit / K;
+  recallEl.textContent = `Recall@${K}: ${(recall*100).toFixed(1)}%`;
+}
+
+/* ======= Buttons ======= */
+buildBtn.addEventListener('click', ()=>{
+  const N=parseInt(NEl.value,10), D=parseInt(DEl.value,10);
+  const K=parseInt(KEl.value,10), L=parseInt(LEl.value,10);
+  const metric=metricEl.value;
+
+  summaryEl.textContent='Generating data…';
+  setTimeout(()=>{
+    DATA = genData(N,D,metric);
+    summaryEl.textContent='Building IVF…';
+    setTimeout(()=>{
+      IVF = buildIVF(DATA, L, 5);
+      GT = bruteTopK(DATA, DATA.q, K);
+      buildGrids(N);
+      highlightGroundTruth();
+      prepareIVFRun();
+      state = { running:false, t0:0, sqlIdx:0, ivfStep:0, ivfOrder:state.ivfOrder, ivfCand:[], hits:new Set(), scannedSQL:0, scannedIVF:0 };
+      sqlStats.textContent='—'; ivfStats.textContent='—'; recallEl.textContent='Recall@K: —';
+      summaryEl.textContent='Primed. Press Play.';
+    },0);
+  },0);
+});
+
+playBtn.addEventListener('click', ()=>{
+  if(!DATA||!IVF){ alert('Click "Build & Prime" first.'); return; }
+  if(state.running) return;
+  state.running=true;
+  anim = setInterval(stepOnce, 8 + (100-parseInt(speedEl.value,10))*2);
+  summaryEl.textContent='Playing…';
+});
+
+pauseBtn.addEventListener('click', ()=>{
+  if(anim) clearInterval(anim);
+  state.running=false;
+  summaryEl.textContent='Paused.';
+});
+
+resetBtn.addEventListener('click', ()=>{
+  if(anim) clearInterval(anim);
+  state.running=false;
+  sqlGrid.innerHTML=''; ivfGrid.innerHTML='';
+  sqlStats.textContent='—'; ivfStats.textContent='—';
+  summaryEl.textContent='Ready.';
+  recallEl.textContent='Recall@K: —';
+  DATA=null; IVF=null; GT=null; state={};
+});
+
+/* ======= Init ======= */
+(function init(){
+  buildGrids(parseInt(NEl.value,10)); // blank layout so users see the grid even before build
+})();
+</script>
+</body>
+</html>
