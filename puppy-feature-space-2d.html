@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Feature Space: Dogness vs Floweriness</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff; --line:#223252; --card:#141b2f; --grid:#1a2742;
+    --good:#163a2f; --warn:#3a2c16;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px}
+  h1{font-size:22px;margin:0 0 6px}
+  .note{color:var(--muted);margin:4px 0 14px}
+  .panel{display:flex;gap:16px;flex-wrap:wrap}
+  .left{flex:1 1 640px;min-width:340px}
+  .right{flex:1 1 280px;min-width:260px}
+  .board{position:relative;height:520px;border:1px solid var(--line);border-radius:12px;background:
+    linear-gradient(0deg, transparent 49%, var(--grid) 50%, transparent 51%),
+    linear-gradient(90deg, transparent 49%, var(--grid) 50%, transparent 51%),
+    radial-gradient(circle at 0 0, transparent 0 0);
+    background-color:var(--card);
+  }
+  .axis{position:absolute;color:#cbd6ea;font-size:12px}
+  .axis.x{left:8px;bottom:8px}
+  .axis.y{left:8px;top:8px}
+  .tick{position:absolute;background:var(--grid);width:1px;height:100%}
+  .tick.h{height:1px;width:100%}
+  .card{position:absolute;translate:-50% -50%;user-select:none;cursor:grab;background:#0f1629;border:1px solid var(--line);border-radius:10px;padding:6px 8px;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+  .card:focus{outline:2px solid var(--accent)}
+  .card.dragging{cursor:grabbing;opacity:.9}
+  .tag{font-size:11px;color:#b9c9e9}
+  .coords{font-size:12px;color:#9fb1d3}
+  .sel{box-shadow:0 0 0 2px #79c0ff}
+  .controls{display:flex;flex-direction:column;gap:12px}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .box h2{font-size:16px;margin:0 0 8px}
+  button, select, input[type=number]{background:#0f1629;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  button{cursor:pointer}
+  .list{display:grid;grid-template-columns:1fr;gap:8px}
+  code{background:#0f1629;border:1px solid var(--line);border-radius:8px;padding:4px 6px}
+  .krow{display:flex;justify-content:space-between;gap:8px;color:var(--muted)}
+  .krow strong{color:#e6eefc}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Lay Out the Photos: Dogness (x) vs Floweriness (y)</h1>
+  <div class="note">Drag cards on the plane. <strong>Snap to Model</strong> places each at a simulated embedding. Select a card and run <strong>Find Nearest Neighbors</strong> to see similarity.</div>
+
+  <div class="panel">
+    <div class="left">
+      <div id="board" class="board" role="application" aria-label="2D feature space">
+        <div class="axis x">x: dogness (0 → 1)</div>
+        <div class="axis y">y: floweriness (0 → 1)</div>
+        <!-- ticks -->
+      </div>
+    </div>
+    <div class="right controls">
+      <div class="box">
+        <h2>Placement</h2>
+        <button id="snap">Snap to Model</button>
+        <button id="reset">Reset Positions</button>
+      </div>
+      <div class="box">
+        <h2>Nearest Neighbors</h2>
+        <label>Metric:
+          <select id="metric">
+            <option value="cosine">Cosine similarity</option>
+            <option value="euclid">Euclidean distance</option>
+          </select>
+        </label>
+        <label>Top K:
+          <input id="topk" type="number" min="1" max="5" step="1" value="3" />
+        </label>
+        <button id="find">Find Nearest Neighbors</button>
+        <div id="nnList" class="list" aria-live="polite"></div>
+      </div>
+      <div class="box">
+        <h2>Selected</h2>
+        <div id="selInfo" class="krow">None selected</div>
+      </div>
+      <div class="box">
+        <h2>Export</h2>
+        <button id="export">Copy vectors JSON</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const board = document.getElementById('board');
+const W = ()=>board.clientWidth, H = ()=>board.clientHeight;
+// add grid ticks (10%)
+for(let i=1;i<10;i++){
+  const v = document.createElement('div'); v.className='tick'; v.style.left = (i*10)+'%'; board.appendChild(v);
+  const h = document.createElement('div'); h.className='tick h'; h.style.top  = (i*10)+'%'; board.appendChild(h);
+}
+
+const ITEMS = [
+  { id:'A', label:'🐶🌸  (puppy in flowers)',   model:[0.72,0.91] },
+  { id:'B', label:'🐶    (dog on carpet)',      model:[0.86,0.05] },
+  { id:'C', label:'🌸    (tulip bed)',          model:[0.05,0.94] },
+  { id:'D', label:'🌳    (park bench)',         model:[0.18,0.22] },
+  { id:'E', label:'🏖️🌺 (beach hibiscus)',     model:[0.02,0.65] },
+];
+
+let state = new Map(); // id -> {pos:[x,y], el:HTMLElement}
+let selectedId = null;
+
+function xyToPx([x,y]){ return [x*W(), (1-y)*H()]; }
+function pxToXy([px,py]){ return [clamp(px/W(),0,1), clamp(1-py/H(),0,1)]; }
+const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+
+function createCard(item){
+  const el = document.createElement('button');
+  el.className='card';
+  el.setAttribute('type','button');
+  el.setAttribute('aria-label', `${item.label}`);
+  el.innerHTML = `
+    <div class="tag">${item.id}</div>
+    <div style="font-size:22px;margin:2px 0">${item.label.split(' ')[0]}</div>
+    <div class="coords" data-c="${item.id}">(x=0.50, y=0.50)</div>
+  `;
+  board.appendChild(el);
+  // start centered
+  setCardPos(item.id, el, [0.5,0.5]);
+  enableDrag(item.id, el);
+  el.addEventListener('click', ()=>select(item.id));
+  el.addEventListener('keydown', (e)=>{
+    if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){
+      e.preventDefault();
+      const step = e.shiftKey? 0.05 : 0.01;
+      const cur = state.get(item.id).pos.slice();
+      if(e.key==='ArrowLeft')  cur[0]-=step;
+      if(e.key==='ArrowRight') cur[0]+=step;
+      if(e.key==='ArrowUp')    cur[1]+=step;
+      if(e.key==='ArrowDown')  cur[1]-=step;
+      cur[0]=clamp(cur[0],0,1); cur[1]=clamp(cur[1],0,1);
+      setCardPos(item.id, el, cur);
+    }
+  });
+}
+
+function setCardPos(id, el, xy){
+  const [px,py] = xyToPx(xy);
+  el.style.left = px+'px';
+  el.style.top  = py+'px';
+  el.querySelector(`[data-c="${id}"]`).textContent = `(x=${xy[0].toFixed(2)}, y=${xy[1].toFixed(2)})`;
+  const prev = state.get(id) || {};
+  state.set(id, { pos: xy, el });
+  if(selectedId===id) updateSelectedPanel();
+}
+
+function enableDrag(id, el){
+  let dragging=false, offX=0, offY=0;
+  const onDown = (e)=>{
+    dragging=true; el.classList.add('dragging');
+    const rect = el.getBoundingClientRect();
+    offX = (e.touches? e.touches[0].clientX : e.clientX) - rect.left;
+    offY = (e.touches? e.touches[0].clientY : e.clientY) - rect.top;
+    select(id);
+  };
+  const onMove = (e)=>{
+    if(!dragging) return;
+    const bx = board.getBoundingClientRect();
+    const cx = (e.touches? e.touches[0].clientX : e.clientX) - bx.left - offX + el.offsetWidth/2;
+    const cy = (e.touches? e.touches[0].clientY : e.clientY) - bx.top  - offY + el.offsetHeight/2;
+    const xy = pxToXy([cx,cy]);
+    setCardPos(id, el, xy);
+  };
+  const onUp = ()=>{ dragging=false; el.classList.remove('dragging'); };
+  el.addEventListener('mousedown', onDown); el.addEventListener('touchstart', onDown, {passive:true});
+  window.addEventListener('mousemove', onMove); window.addEventListener('touchmove', onMove, {passive:false});
+  window.addEventListener('mouseup', onUp); window.addEventListener('touchend', onUp);
+}
+
+function select(id){
+  if(selectedId && state.get(selectedId)) state.get(selectedId).el.classList.remove('sel');
+  selectedId = id;
+  state.get(id).el.classList.add('sel');
+  updateSelectedPanel();
+}
+
+function updateSelectedPanel(){
+  const box = document.getElementById('selInfo');
+  if(!selectedId){ box.textContent = 'None selected'; return; }
+  const {pos} = state.get(selectedId);
+  box.innerHTML = `<div class="krow"><strong>${selectedId}</strong><span>(x=${pos[0].toFixed(3)}, y=${pos[1].toFixed(3)})</span></div>`;
+}
+
+function snapToModel(){
+  ITEMS.forEach(item=>{
+    const { el } = state.get(item.id);
+    setCardPos(item.id, el, item.model);
+  });
+}
+
+function resetPositions(){
+  ITEMS.forEach(item=>{
+    const { el } = state.get(item.id);
+    setCardPos(item.id, el, [0.5,0.5]);
+  });
+  selectedId=null; document.getElementById('selInfo').textContent='None selected';
+  document.getElementById('nnList').innerHTML='';
+  state.forEach(s=>s.el.classList.remove('sel'));
+}
+
+function cosine(a,b){
+  const dot = a[0]*b[0] + a[1]*b[1];
+  const na = Math.hypot(a[0],a[1]), nb = Math.hypot(b[0],b[1]);
+  if(na===0||nb===0) return 0;
+  return dot/(na*nb);
+}
+function euclid(a,b){
+  return Math.hypot(a[0]-b[0], a[1]-b[1]);
+}
+
+function findNN(){
+  if(!selectedId){ alert('Select a card first (click it).'); return; }
+  const metric = document.getElementById('metric').value;
+  const k = Math.max(1, Math.min(5, parseInt(document.getElementById('topk').value||3,10)));
+  const q = state.get(selectedId).pos;
+
+  const scored = ITEMS.filter(it=>it.id!==selectedId).map(it=>{
+    const p = state.get(it.id).pos;
+    if(metric==='cosine'){
+      return { id:it.id, score: cosine(q,p) }; // higher is better
+    }else{
+      return { id:it.id, score: euclid(q,p) }; // lower is better
+    }
+  });
+
+  const sorted = scored.sort((a,b)=>{
+    return (metric==='cosine') ? b.score - a.score : a.score - b.score;
+  }).slice(0,k);
+
+  // highlight list
+  const list = document.getElementById('nnList');
+  list.innerHTML = sorted.map(s=>{
+    const val = (metric==='cosine') ? s.score.toFixed(3) : s.score.toFixed(3);
+    const label = ITEMS.find(i=>i.id===s.id).label;
+    return `<div class="krow"><strong>${s.id}</strong><span>${label}</span><span><code>${val}</code></span></div>`;
+  }).join('');
+
+  // brief pulse effect on winners
+  state.forEach(({el}, id)=>{
+    el.style.opacity = '1';
+  });
+  sorted.forEach(s=>{
+    const el = state.get(s.id).el;
+    el.animate([{transform:'translate(-50%,-50%) scale(1.0)'},{transform:'translate(-50%,-50%) scale(1.06)'},{transform:'translate(-50%,-50%) scale(1.0)'}],{duration:450});
+  });
+}
+
+function exportJSON(){
+  const out = {};
+  state.forEach((v,k)=> out[k]= { vector: v.pos });
+  navigator.clipboard.writeText(JSON.stringify(out,null,2))
+    .then(()=> alert('Copied vectors JSON to clipboard!'))
+    .catch(()=> alert('Could not copy to clipboard; select & copy manually:\n\n'+JSON.stringify(out,null,2)));
+}
+
+// init
+ITEMS.forEach(createCard);
+document.getElementById('snap').addEventListener('click', snapToModel);
+document.getElementById('reset').addEventListener('click', resetPositions);
+document.getElementById('find').addEventListener('click', findNN);
+document.getElementById('export').addEventListener('click', exportJSON);
+
+// select a default for UX
+select('A');
+</script>
+</body>
+</html>

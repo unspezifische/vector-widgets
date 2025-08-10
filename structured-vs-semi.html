@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Structured vs Semi-Structured Demo</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff;
+    --null:#2a3347; --good:#163a2f; --card:#141b2f; --line:#223252;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px}
+  h1{font-size:22px;margin:0 0 12px}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 16px}
+  .controls .group{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;display:flex;gap:10px;align-items:center}
+  .controls label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted)}
+  .controls input[type=checkbox]{accent-color:var(--accent)}
+  .viewtabs{margin-left:auto;display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .viewtabs button{background:transparent;color:var(--muted);border:0;padding:8px 12px;cursor:pointer}
+  .viewtabs button[aria-pressed="true"]{color:var(--fg);background:var(--line)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  thead th{font-weight:600;text-align:left;padding:10px;border-bottom:1px solid var(--line);color:#cbd6ea;background:#10172a}
+  tbody td{padding:10px;border-bottom:1px solid var(--line)}
+  tbody tr:last-child td{border-bottom:0}
+  .chip{font-size:12px;border:1px solid var(--line);padding:2px 8px;border-radius:20px;background:#0e1629;color:#b8c7e6}
+  .null{background:var(--null);color:#8aa0be;border-radius:6px;text-align:center}
+  .note{color:var(--muted);margin:10px 2px 14px}
+  pre{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;max-height:380px}
+  .legend{display:flex;gap:12px;align-items:center;margin:6px 0 0}
+  .key{display:inline-flex;align-items:center;gap:6px;color:var(--muted)}
+  .swatch{width:14px;height:14px;border-radius:4px;border:1px solid var(--line)}
+  .swatch.null{background:var(--null)}
+  .swatch.shared{background:#0f1a31}
+  .swatch.optional{background:#13213d}
+  .sr-only{position:absolute;left:-9999px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Structured vs Semi-Structured Data</h1>
+  <div class="note">Toggle file types to see how a strict table accumulates <code>NULL</code>s when optional, type-specific fields are present. Switch views to compare with object storage.</div>
+
+  <div class="controls" role="group" aria-label="Demo controls">
+    <div class="group" aria-label="Show file types">
+      <strong style="color:#cbd6ea">Types:</strong>
+      <label><input type="checkbox" data-type="text" checked>Text</label>
+      <label><input type="checkbox" data-type="image" checked>Image</label>
+      <label><input type="checkbox" data-type="audio" checked>Audio</label>
+    </div>
+    <div class="group" aria-label="Optional columns">
+      <strong style="color:#cbd6ea">Columns:</strong>
+      <label title="Text-only column"><input type="checkbox" data-col="word_count" checked>word_count</label>
+      <label title="Image-only column"><input type="checkbox" data-col="resolution" checked>resolution</label>
+      <label title="Image-only column"><input type="checkbox" data-col="gps" checked>gps</label>
+      <label title="Audio-only column"><input type="checkbox" data-col="duration" checked>duration</label>
+    </div>
+    <div class="viewtabs" role="group" aria-label="View">
+      <button type="button" data-view="table" aria-pressed="true" title="Relational table view">Table</button>
+      <button type="button" data-view="object" aria-pressed="false" title="Object/JSON view">Object</button>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="key"><span class="swatch shared"></span>shared columns</span>
+    <span class="key"><span class="swatch optional"></span>optional columns</span>
+    <span class="key"><span class="swatch null"></span>NULL inapplicable</span>
+  </div>
+
+  <div id="tableView" aria-live="polite"></div>
+  <div id="objectView" hidden aria-live="polite"></div>
+</div>
+
+<script>
+const DATA = [
+  {id:1, name:"story.txt",    type:"text",  size_kb:12,  created:"2024-03-01", modified:"2024-03-03", word_count:2145},
+  {id:2, name:"puppy.jpg",    type:"image", size_kb:204, created:"2024-05-11", modified:"2024-05-12", resolution:"4000x3000", gps:"44.123,-121.312"},
+  {id:3, name:"podcast.mp3",  type:"audio", size_kb:9120,created:"2024-05-02", modified:"2024-05-02", duration:"42:10"},
+  {id:4, name:"tulips.png",   type:"image", size_kb:512, created:"2024-05-20", modified:"2024-05-21", resolution:"2560x1440"},
+  {id:5, name:"notes.md",     type:"text",  size_kb:7,   created:"2024-04-10", modified:"2024-04-12", word_count:684},
+  {id:6, name:"ambient.wav",  type:"audio", size_kb:3012,created:"2024-06-01", modified:"2024-06-01", duration:"03:22"},
+];
+
+const sharedCols = ["name","type","size_kb","created","modified"];
+const optionalCols = [
+  {key:"word_count", types:["text"]},
+  {key:"resolution", types:["image"]},
+  {key:"gps",        types:["image"]},
+  {key:"duration",   types:["audio"]},
+];
+
+const typeChecks = [...document.querySelectorAll('input[data-type]')];
+const colChecks  = [...document.querySelectorAll('input[data-col]')];
+const viewButtons= [...document.querySelectorAll('.viewtabs button')];
+
+const tableView  = document.getElementById('tableView');
+const objectView = document.getElementById('objectView');
+
+function getActiveTypes(){
+  return new Set(typeChecks.filter(ch=>ch.checked).map(ch=>ch.dataset.type));
+}
+function getActiveOptionalCols(){
+  return optionalCols.filter(def=>{
+    const chk = colChecks.find(c=>c.dataset.col===def.key);
+    return chk && chk.checked;
+  }).map(d=>d.key);
+}
+
+function renderTable(){
+  const activeTypes = getActiveTypes();
+  const activeOptCols = getActiveOptionalCols();
+
+  const cols = [...sharedCols, ...activeOptCols];
+  const header = cols.map(c=>{
+    const isOptional = activeOptCols.includes(c);
+    const bg = isOptional ? ' style="background:#13213d"' : '';
+    return `<th${bg}>${c}</th>`;
+  }).join("");
+
+  const rows = DATA.filter(r=>activeTypes.has(r.type)).map(r=>{
+    const tds = cols.map(c=>{
+      const valueApplies = sharedCols.includes(c) || optionalCols.find(o=>o.key===c)?.types.includes(r.type);
+      const val = r[c];
+      if(!valueApplies) return `<td class="null">NULL</td>`;
+      const display = (val===undefined? `<span class="null">NULL</span>` : 
+        (c==="type" ? `<span class="chip">${r.type}</span>` : String(val)));
+      return `<td>${display}</td>`;
+    }).join("");
+    return `<tr>${tds}</tr>`;
+  }).join("");
+
+  tableView.innerHTML = `
+    <table aria-describedby="legend">
+      <thead><tr>${header}</tr></thead>
+      <tbody>${rows || `<tr><td colspan="${cols.length}" class="null">No rows for selected types.</td></tr>`}</tbody>
+    </table>
+  `;
+}
+
+function renderObjects(){
+  const activeTypes = getActiveTypes();
+  const rows = DATA.filter(r=>activeTypes.has(r.type))
+    .map(r=>JSON.stringify(r, null, 2))
+    .join("\n");
+  objectView.innerHTML = `<pre aria-label="Object records">${rows || '// No objects for selected types.'}</pre>`;
+}
+
+function setView(which){
+  viewButtons.forEach(b=>b.setAttribute('aria-pressed', b.dataset.view===which ? 'true':'false'));
+  const table = which==='table';
+  tableView.hidden = !table;
+  objectView.hidden = table;
+  if(table) renderTable(); else renderObjects();
+}
+
+typeChecks.forEach(ch=>ch.addEventListener('change', ()=>{ renderTable(); renderObjects(); }));
+colChecks.forEach(ch=>ch.addEventListener('change', ()=>{ renderTable(); }));
+viewButtons.forEach(btn=>btn.addEventListener('click', ()=> setView(btn.dataset.view)));
+
+setView('table');
+</script>
+</body>
+</html>
