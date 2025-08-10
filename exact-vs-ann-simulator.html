@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Exact vs Approximate ANN Simulator (IVF)</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff; --line:#223252; --card:#141b2f;
+    --good:#6ee7b7; --warn:#fbbf24; --bad:#fca5a5; --bar:#bcd1f0;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px}
+  h1{font-size:22px;margin:0 0 6px}
+  .note{color:var(--muted);margin:0 0 12px}
+  .panel{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:1000px){.panel{grid-template-columns:1fr}}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .box h2{font-size:16px;margin:0 0 8px}
+  .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0}
+  label{color:#cbd6ea}
+  input[type=number], select, button{background:#0f1629;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+  input[type=range]{width:220px}
+  button{cursor:pointer}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .stat{color:#cfe0ff}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;color:#cbd6ea;background:#0f1629}
+  .bars{display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px}
+  .barrow{display:grid;grid-template-columns:120px 1fr;gap:8px;align-items:center}
+  .bar{height:14px;background:linear-gradient(90deg, var(--good), var(--warn));border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+  .bar .fill{height:100%;background:var(--bar)}
+  code{background:#0f1629;border:1px solid var(--line);border-radius:8px;padding:2px 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Exact vs Approximate Nearest Neighbor (IVF) Simulator</h1>
+  <div class="note">
+    Generates <b>N</b> vectors in <b>D</b> dimensions. <b>Exact</b> uses brute-force over all points. <b>Approximate</b> uses an IVF-like index:
+    the dataset is split into <b>L</b> coarse clusters (lists), and at query time we only probe the <b>nprobe</b> closest lists.
+    Compare speed vs recall@K.
+  </div>
+
+  <div class="panel">
+    <div class="box">
+      <h2>Dataset & Index</h2>
+      <div class="row">
+        <label>N (points): <input id="N" type="number" min="500" max="20000" step="500" value="6000"/></label>
+        <label>D (dims): <input id="D" type="number" min="8" max="256" step="8" value="64"/></label>
+        <label>Metric:
+          <select id="metric">
+            <option value="cosine">Cosine</option>
+            <option value="euclid">Euclidean</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>L (lists): <input id="L" type="number" min="4" max="256" step="4" value="64"/></label>
+        <label>k-means iters: <input id="iters" type="number" min="1" max="20" step="1" value="6"/></label>
+        <button id="gen">Generate & Build Index</button>
+        <span id="buildInfo" class="pill">Not built</span>
+      </div>
+      <div class="row">
+        <span>Index type: <code>IVF (coarse quantization)</code> • Centers init by random samples + Lloyd steps.</span>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2>Queries</h2>
+      <div class="row">
+        <label>Queries (Q): <input id="Q" type="number" min="1" max="200" step="1" value="25"/></label>
+        <label>Top-K: <input id="K" type="number" min="1" max="50" step="1" value="10"/></label>
+        <label>nprobe (lists to scan): <input id="nprobe" type="number" min="1" max="256" step="1" value="6"/></label>
+      </div>
+      <div class="row">
+        <button id="runExact">Run EXACT</button>
+        <button id="runANN">Run APPROX</button>
+        <button id="runBoth">Run BOTH</button>
+      </div>
+
+      <div class="grid">
+        <div>
+          <h3>Exact (Brute-force)</h3>
+          <div id="exactStats" class="stat">—</div>
+          <div class="bars">
+            <div class="barrow"><div>Avg latency</div><div class="bar"><div id="barExactLatency" class="fill" style="width:0%"></div></div></div>
+            <div class="barrow"><div>Scanned</div><div class="bar"><div id="barExactScan" class="fill" style="width:0%"></div></div></div>
+          </div>
+        </div>
+        <div>
+          <h3>Approx (IVF)</h3>
+          <div id="annStats" class="stat">—</div>
+          <div class="bars">
+            <div class="barrow"><div>Avg latency</div><div class="bar"><div id="barAnnLatency" class="fill" style="width:0%"></div></div></div>
+            <div class="barrow"><div>Scanned</div><div class="bar"><div id="barAnnScan" class="fill" style="width:0%"></div></div></div>
+            <div class="barrow"><div>Recall@K</div><div class="bar"><div id="barRecall" class="fill" style="width:0%"></div></div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px">
+        <span class="pill" id="summary">Ready.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= Utilities ================= */
+const rnd = ()=>Math.random()*2-1;
+function l2Norm(v){ let s=0; for(let i=0;i<v.length;i++) s+=v[i]*v[i]; return Math.sqrt(s); }
+function normalize(v){ const n=l2Norm(v)||1; for(let i=0;i<v.length;i++) v[i]/=n; return v; }
+function euclid(a,b){ let s=0; for(let i=0;i<a.length;i++){ const d=a[i]-b[i]; s+=d*d; } return Math.sqrt(s); }
+function cosine(a,b){
+  let num=0,na=0,nb=0;
+  for(let i=0;i<a.length;i++){ const ai=a[i], bi=b[i]; num+=ai*bi; na+=ai*ai; nb+=bi*bi; }
+  if(na===0||nb===0) return 0;
+  return num/(Math.sqrt(na)*Math.sqrt(nb));
+}
+function argmax(arr){ let m=-Infinity, idx=-1; for(let i=0;i<arr.length;i++){ if(arr[i]>m){m=arr[i]; idx=i;} } return idx; }
+function argmin(arr){ let m=+Infinity, idx=-1; for(let i=0;i<arr.length;i++){ if(arr[i]<m){m=arr[i]; idx=i;} } return idx; }
+function now(){ return performance.now(); }
+function choice(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+
+/* ================= Dataset ================= */
+let DATA = null; // {X: Float32Array[], metric: 'cosine'|'euclid', N, D}
+function genData(N,D,metric){
+  const X = new Array(N);
+  for(let i=0;i<N;i++){
+    const v = new Float32Array(D);
+    for(let j=0;j<D;j++) v[j] = rnd();
+    if(metric==='cosine') normalize(v);
+    X[i]=v;
+  }
+  return {X, N, D, metric};
+}
+
+/* ================= IVF Index ================= */
+let INDEX = null; // {centroids: Float32Array[], lists: Int32Array[], metric, builtMs, assigns}
+function buildIVF({X,N,D,metric}, L=64, iters=6){
+  const t0 = now();
+
+  // init centroids by random samples
+  const centroids = new Array(L);
+  const used = new Set();
+  for(let i=0;i<L;i++){
+    let pick = Math.floor(Math.random()*N);
+    while(used.has(pick)){ pick = Math.floor(Math.random()*N); }
+    used.add(pick);
+    centroids[i] = new Float32Array(X[pick]); // copy
+  }
+
+  // Lloyd steps: assign -> update
+  const assign = new Int32Array(N);
+  for(let it=0; it<iters; it++){
+    // assignment
+    for(let i=0;i<N;i++){
+      let best=-1, bestScore = (metric==='cosine' ? -Infinity : +Infinity);
+      for(let c=0;c<L;c++){
+        const s = (metric==='cosine') ? cosine(X[i], centroids[c]) : euclid(X[i], centroids[c]);
+        if(metric==='cosine'){
+          if(s>bestScore){ bestScore=s; best=c; }
+        }else{
+          if(s<bestScore){ bestScore=s; best=c; }
+        }
+      }
+      assign[i]=best;
+    }
+    // update
+    const sums = Array.from({length:L}, ()=>new Float64Array(D));
+    const counts = new Int32Array(L);
+    for(let i=0;i<N;i++){
+      const g = assign[i];
+      counts[g]++;
+      const v = X[i];
+      const s = sums[g];
+      for(let d=0; d<D; d++) s[d]+=v[d];
+    }
+    for(let c=0;c<L;c++){
+      if(counts[c]===0) continue; // empty list, keep previous
+      const inv = 1.0 / counts[c];
+      const cen = centroids[c];
+      for(let d=0; d<D; d++) cen[d] = sums[c][d]*inv;
+      if(metric==='cosine') normalize(cen);
+    }
+  }
+
+  // build inverted lists
+  const lists = Array.from({length:L}, ()=>[]);
+  for(let i=0;i<N;i++) lists[assign[i]].push(i);
+
+  const builtMs = now()-t0;
+  return {centroids, lists, metric, builtMs, assigns: assign};
+}
+
+/* ================= Searching ================= */
+function topKExact({X,N,metric}, q, K){
+  const scores = new Float32Array(N);
+  const start = now();
+  for(let i=0;i<N;i++){
+    scores[i] = (metric==='cosine') ? cosine(q, X[i]) : euclid(q, X[i]);
+  }
+  const took = now()-start;
+
+  // arg top-K
+  const idxs = [...Array(N).keys()];
+  idxs.sort((i,j)=> metric==='cosine' ? (scores[j]-scores[i]) : (scores[i]-scores[j]));
+  return {idxs: idxs.slice(0,K), tookMs: took, scanned: N};
+}
+
+function topKIVF({X,N,D,metric}, idx, q, K, nprobe){
+  // find closest centroids
+  const L = idx.centroids.length;
+  const cScores = new Array(L);
+  for(let c=0;c<L;c++){
+    cScores[c] = (metric==='cosine') ? cosine(q, idx.centroids[c]) : euclid(q, idx.centroids[c]);
+  }
+  const cIdx = [...Array(L).keys()];
+  cIdx.sort((a,b)=> metric==='cosine' ? (cScores[b]-cScores[a]) : (cScores[a]-cScores[b]));
+  const probe = cIdx.slice(0, Math.min(nprobe, L));
+
+  // scan only those lists
+  const start = now();
+  const cand = [];
+  for(const c of probe){
+    const list = idx.lists[c];
+    for(let t=0;t<list.length;t++) cand.push(list[t]);
+  }
+
+  const scores = new Float32Array(cand.length);
+  for(let i=0;i<cand.length;i++){
+    const id = cand[i];
+    scores[i] = (metric==='cosine') ? cosine(q, X[id]) : euclid(q, X[id]);
+  }
+
+  const took = now() - start;
+  const order = [...Array(cand.length).keys()];
+  order.sort((i,j)=> metric==='cosine' ? (scores[j]-scores[i]) : (scores[i]-scores[j]));
+  const top = order.slice(0,K).map(i=>cand[i]);
+  return {idxs: top, tookMs: took, scanned: cand.length, probed: probe.length};
+}
+
+/* ================= Experiment Runner ================= */
+let DATASET=null, IVF=null;
+
+const NEl = document.getElementById('N');
+const DEl = document.getElementById('D');
+const metricEl = document.getElementById('metric');
+const LEl = document.getElementById('L');
+const itersEl = document.getElementById('iters');
+const buildInfo = document.getElementById('buildInfo');
+
+const QEl = document.getElementById('Q');
+const KEl = document.getElementById('K');
+const nprobeEl = document.getElementById('nprobe');
+const runExactBtn = document.getElementById('runExact');
+const runAnnBtn = document.getElementById('runANN');
+const runBothBtn = document.getElementById('runBoth');
+
+const exactStats = document.getElementById('exactStats');
+const annStats   = document.getElementById('annStats');
+const barExactLatency = document.getElementById('barExactLatency');
+const barExactScan    = document.getElementById('barExactScan');
+const barAnnLatency   = document.getElementById('barAnnLatency');
+const barAnnScan      = document.getElementById('barAnnScan');
+const barRecall       = document.getElementById('barRecall');
+const summary         = document.getElementById('summary');
+
+document.getElementById('gen').addEventListener('click', ()=>{
+  const N = parseInt(NEl.value,10);
+  const D = parseInt(DEl.value,10);
+  const metric = metricEl.value;
+  summary.textContent = 'Generating data...';
+  setTimeout(()=>{
+    DATASET = genData(N,D,metric);
+    summary.textContent = 'Building IVF index...';
+    setTimeout(()=>{
+      const L = parseInt(LEl.value,10);
+      const iters = parseInt(itersEl.value,10);
+      IVF = buildIVF(DATASET, L, iters);
+      buildInfo.textContent = `Built: L=${L}, iters=${iters}, ${IVF.builtMs.toFixed(0)} ms`;
+      summary.textContent = 'Ready. Run queries!';
+    }, 0);
+  }, 0);
+});
+
+runExactBtn.addEventListener('click', ()=> runExperiment({exact:true, ann:false}));
+runAnnBtn.addEventListener('click', ()=> runExperiment({exact:false, ann:true}));
+runBothBtn.addEventListener('click', ()=> runExperiment({exact:true, ann:true}));
+
+function runExperiment({exact, ann}){
+  if(!DATASET){ alert('Generate & build the index first.'); return; }
+  if(ann && !IVF){ alert('Index not built.'); return; }
+
+  const Q = parseInt(QEl.value,10);
+  const K = parseInt(KEl.value,10);
+  const nprobe = parseInt(nprobeEl.value,10);
+
+  const {X,N,D,metric} = DATASET;
+
+  // Create random queries by sampling dataset vectors + small noise
+  const queries = new Array(Q);
+  for(let i=0;i<Q;i++){
+    const base = new Float32Array(X[Math.floor(Math.random()*N)]);
+    if(metric==='cosine'){
+      // tiny noise, renormalize
+      for(let j=0;j<D;j++) base[j]+= (Math.random()*2-1)*0.01;
+      normalize(base);
+    }else{
+      // for euclid, small jitter
+      for(let j=0;j<D;j++) base[j]+= (Math.random()*2-1)*0.01;
+    }
+    queries[i]=base;
+  }
+
+  let exactLatency=0, exactScan=0;
+  let annLatency=0, annScan=0, recallCount=0, totalRecall=0;
+
+  // If we need exact for recall baseline, compute once
+  const exactResults = exact || ann ? new Array(Q) : null;
+  if(exact || ann){
+    // For ann-only run, we still need exact for recall comparison; compute once here if ann is true
+    if(ann && !exact){
+      for(let i=0;i<Q;i++){
+        const r = topKExact(DATASET, queries[i], K);
+        exactResults[i] = r.idxs;
+      }
+    }
+  }
+
+  if(exact){
+    let tSum=0, sSum=0;
+    for(let i=0;i<Q;i++){
+      const r = topKExact(DATASET, queries[i], K);
+      tSum += r.tookMs; sSum += r.scanned;
+      exactResults[i] = r.idxs; // keep for ann comparison too
+    }
+    exactLatency = tSum/Q; exactScan = sSum/Q;
+    exactStats.innerHTML = `Avg latency: <b>${exactLatency.toFixed(2)} ms</b><br/>Avg scanned: <b>${Math.round(exactScan)}</b> / ${N}<br/>QPS (est): <b>${(1000/exactLatency).toFixed(1)}</b>`;
+  }
+
+  if(ann){
+    let tSum=0, sSum=0, rSum=0;
+    for(let i=0;i<Q;i++){
+      const a = topKIVF(DATASET, IVF, queries[i], K, nprobe);
+      tSum += a.tookMs; sSum += a.scanned;
+
+      // recall@K vs exact baseline
+      const base = exactResults[i] || topKExact(DATASET, queries[i], K).idxs;
+      const set = new Set(base);
+      let hit=0; for(const id of a.idxs){ if(set.has(id)) hit++; }
+      rSum += (hit / K);
+    }
+    annLatency = tSum/Q; annScan = sSum/Q; totalRecall = rSum/Q;
+    annStats.innerHTML = `Avg latency: <b>${annLatency.toFixed(2)} ms</b><br/>Avg scanned: <b>${Math.round(annScan)}</b> / ${N}<br/>Recall@${K}: <b>${(totalRecall*100).toFixed(1)}%</b><br/>nprobe: <b>${nprobe}</b> of L=${IVF.centroids.length}`;
+  }
+
+  // Bars — relative to exact latency & full scan
+  const maxLatency = Math.max(1, exactLatency, annLatency);
+  barExactLatency.style.width = `${(exactLatency/maxLatency)*100}%`;
+  barAnnLatency.style.width   = `${(annLatency/maxLatency)*100}%`;
+  barExactScan.style.width    = `${(exactScan/ N)*100}%`;
+  barAnnScan.style.width      = `${(annScan / N)*100}%`;
+  barRecall.style.width       = `${(totalRecall)*100}%`;
+
+  // Summary pill
+  if(exact && ann){
+    const speedup = exactLatency>0 ? (exactLatency/annLatency) : 0;
+    summary.textContent = `Approx is ~${speedup.toFixed(1)}× faster with Recall@${K} ≈ ${(totalRecall*100).toFixed(1)}% (nprobe=${nprobe}).`;
+  }else if(exact){
+    summary.textContent = `Exact avg latency ${exactLatency.toFixed(2)} ms scanning all ${N} points.`;
+  }else{
+    summary.textContent = `Approx avg latency ${annLatency.toFixed(2)} ms, Recall@${K} ${(totalRecall*100).toFixed(1)}%, scanning ~${Math.round(annScan)} candidates.`;
+  }
+}
+</script>
+</body>
+</html>
