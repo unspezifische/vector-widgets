@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Vector Databases — Final Quiz (Paginated)</title>
+<style>
+  :root{
+    --bg:#0b1020; --fg:#e8ecf2; --muted:#9aa7bd; --accent:#8fd3ff; --line:#223252; --card:#141b2f;
+    --good:#22c55e; --warn:#f59e0b; --mid:#fbbf24; --bad:#ef4444;
+  }
+  html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,Segoe UI,Roboto,Inter,Arial}
+  .wrap{max-width:900px;margin:0 auto;padding:18px}
+  h1{font-size:22px;margin:0 0 10px}
+  .box{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .topbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:10px}
+  .pill{display:inline-block;padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:#0f1629;color:#cbd6ea}
+  .controls{display:flex;gap:8px;flex-wrap:wrap}
+  button,select{background:#0f1629;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+  .qcard{border:1px solid var(--line);border-radius:12px;padding:12px;background:#0f1629;min-height:160px}
+  .qcard h2{font-size:16px;margin:0 0 8px}
+  .choices{display:grid;gap:8px;margin-top:6px}
+  .choice{display:flex;gap:10px;align-items:flex-start;padding:8px;border:1px solid var(--line);border-radius:10px;background:#0b162b}
+  .choice.correct{border-color:#134e4a;background:#0b1f1a}
+  .choice.incorrect{border-color:#4b1e1e;background:#1a0f12}
+  .explain{margin-top:8px;color:#cfe0ff;font-size:13px;display:none}
+  .explain.show{display:block}
+  .nav{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:8px}
+  .progress{flex:1;height:8px;background:#0f1629;border:1px solid var(--line);border-radius:999px;overflow:hidden}
+  .bar{height:100%;width:0;background:linear-gradient(90deg,#8fd3ff,#6ee7b7)}
+  .ringWrap{display:grid;place-items:center;margin-top:12px}
+  .ring{width:200px;height:200px;display:block}
+  .ring text{font:600 26px/1.1 system-ui,Segoe UI,Roboto}
+  .meta{margin-top:6px;color:#cfe0ff;text-align:center}
+  .hint{color:#9fb1d3;font-size:12px;margin-top:4px;text-align:center}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Final Quiz — Vector Databases</h1>
+  <div class="box">
+    <div class="topbar">
+      <div class="controls">
+        <button id="shuffle">Shuffle</button>
+        <button id="reset">Reset</button>
+        <select id="revealMode" title="When to show explanations">
+          <option value="afterSubmit" selected>Show explanations after Submit</option>
+          <option value="always">Always show explanations</option>
+        </select>
+      </div>
+      <span class="pill" id="pos">Q1 of 8</span>
+    </div>
+
+    <!-- Question card -->
+    <div id="card" class="qcard" role="group" aria-live="polite"></div>
+
+    <!-- Pager -->
+    <div class="nav">
+      <button id="prev">◀︎ Previous</button>
+      <div class="progress" aria-label="Progress">
+        <div id="bar" class="bar"></div>
+      </div>
+      <button id="next">Next ▶︎</button>
+      <button id="submit" style="display:none">Submit</button>
+    </div>
+
+    <!-- Score ring (hidden until submit) -->
+    <div id="scoreArea" class="ringWrap" hidden>
+      <svg class="ring" viewBox="0 0 120 120" aria-label="Score ring">
+        <circle cx="60" cy="60" r="54" fill="none" stroke="#1f2a44" stroke-width="10"/>
+        <circle id="arc" cx="60" cy="60" r="54" fill="none" stroke="var(--bad)" stroke-width="10"
+                stroke-linecap="round" stroke-dasharray="339.292" stroke-dashoffset="339.292" transform="rotate(-90 60 60)"/>
+        <text id="scoreText" x="60" y="66" text-anchor="middle" fill="var(--bad)">0%</text>
+      </svg>
+      <div id="meta" class="meta">Submit answers to see your score.</div>
+      <div class="hint">Use Previous/Next to review—explanations are now visible.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ----------------- Quiz Data ----------------- */
+const QUESTIONS = [
+  {
+    q: "Why use a vector database instead of a regular SQL table for similarity search?",
+    choices: [
+      "SQL engines can’t store numbers.",
+      "Vector DBs use specialized indexes (e.g., IVF/HNSW) to avoid scanning all rows.",
+      "Vector DBs automatically label images with captions.",
+      "Vector DBs are only for images, not text."
+    ],
+    correct: 1,
+    explain: "Vector DBs support approximate nearest neighbor indexes (like IVF, HNSW) to skip most comparisons, which is crucial at scale."
+  },
+  {
+    q: "What is an embedding (vector) in this context?",
+    choices: [
+      "A unique filename assigned to an image.",
+      "A list of numbers capturing features of the data point.",
+      "Any JSON object with keys and values.",
+      "A lossless pixel-by-pixel copy of the input."
+    ],
+    correct: 1,
+    explain: "Embeddings are numeric feature vectors that place items in a metric space where distances reflect similarity."
+  },
+  {
+    q: "Feature extraction refers to:",
+    choices: [
+      "Deleting unused columns from a table.",
+      "Detecting measurable characteristics (features) from raw data to feed into vectors.",
+      "Compressing images to smaller file sizes.",
+      "Reformatting data to XML."
+    ],
+    correct: 1,
+    explain: "Feature extraction turns raw inputs into measurable attributes the model can encode numerically."
+  },
+  {
+    q: "Cosine similarity mainly measures:",
+    choices: [
+      "Difference in vector lengths only.",
+      "Direction alignment between vectors, ignoring magnitude when normalized.",
+      "The fastest SQL query plan.",
+      "Whether two strings share identical words."
+    ],
+    correct: 1,
+    explain: "Cosine compares the angle between vectors. With L2-normalization, it emphasizes direction (semantic similarity)."
+  },
+  {
+    q: "The 'curse of dimensionality' implies that as dimensionality increases:",
+    choices: [
+      "Distances tend to concentrate, making nearest neighbor harder.",
+      "All algorithms get faster.",
+      "Cosine similarity becomes undefined.",
+      "Indexing stops working completely."
+    ],
+    correct: 0,
+    explain: "In high-D spaces, many distances look similar, degrading discrimination and making indexing/NN search trickier."
+  },
+  {
+    q: "Why are vectors poor candidates for primary keys?",
+    choices: [
+      "They cannot be serialized.",
+      "Different items can yield very similar or even identical vectors (collisions).",
+      "Databases can’t compare floating points.",
+      "They require GPU support to store."
+    ],
+    correct: 1,
+    explain: "Embeddings are not guaranteed unique; near-duplicates and collisions occur, so use stable IDs and store vectors as attributes."
+  },
+  {
+    q: "Nearest neighbor (NN) vs Exact match:",
+    choices: [
+      "NN retrieves the single row with the smallest ID.",
+      "Exact match needs the identical vector; NN returns items whose vectors are closest.",
+      "NN requires full table scans; exact match does not.",
+      "Exact match is only for text."
+    ],
+    correct: 1,
+    explain: "Exact match compares equality; NN ranks by proximity under a metric (cosine, Euclidean)."
+  },
+  {
+    q: "IVF indexing roughly works by:",
+    choices: [
+      "Hashing vectors to a single integer key.",
+      "Clustering vectors into coarse lists and probing a few closest lists per query.",
+      "Sorting vectors alphabetically.",
+      "Converting vectors to images and matching pixels."
+    ],
+    correct: 1,
+    explain: "IVF = Inverted File: partition the space with coarse centroids, then probe nearest lists instead of scanning all vectors."
+  }
+];
+
+/* ----------------- State ----------------- */
+let order = [...QUESTIONS.keys()];
+let answers = new Map();        // qi -> selected index
+let page = 0;                   // index within 'order'
+let submitted = false;          // after Submit, show explanations during review
+
+/* ----------------- DOM ----------------- */
+const card = document.getElementById('card');
+const posLbl = document.getElementById('pos');
+const bar = document.getElementById('bar');
+const prevBtn = document.getElementById('prev');
+const nextBtn = document.getElementById('next');
+const submitBtn = document.getElementById('submit');
+const shuffleBtn = document.getElementById('shuffle');
+const resetBtn = document.getElementById('reset');
+const revealMode = document.getElementById('revealMode');
+const scoreArea = document.getElementById('scoreArea');
+const arc = document.getElementById('arc');
+const scoreText = document.getElementById('scoreText');
+const meta = document.getElementById('meta');
+const CIRC = 2*Math.PI*54;
+
+/* ----------------- Rendering ----------------- */
+function render(){
+  const qi = order[page];
+  const item = QUESTIONS[qi];
+  posLbl.textContent = `Q${page+1} of ${order.length}`;
+
+  // progress bar: based on page position
+  const pct = ((page) / (order.length-1)) * 100;
+  bar.style.width = `${pct}%`;
+
+  // build question
+  card.innerHTML = '';
+  const h = document.createElement('h2'); h.textContent = item.q; card.appendChild(h);
+
+  const list = document.createElement('div'); list.className = 'choices';
+  item.choices.forEach((c, idx)=>{
+    const id = `q${qi}_c${idx}`;
+    const row = document.createElement('label'); row.className='choice';
+    row.innerHTML = `
+      <input type="radio" name="q${qi}" id="${id}" value="${idx}"/>
+      <div>${c}</div>
+    `;
+    list.appendChild(row);
+  });
+  card.appendChild(list);
+
+  const ex = document.createElement('div'); ex.className='explain'; ex.textContent = item.explain; card.appendChild(ex);
+
+  // restore selection
+  const picked = answers.get(qi);
+  if(picked !== undefined){
+    const inp = card.querySelector(`input[value="${picked}"]`);
+    if(inp) inp.checked = true;
+  }
+
+  // wire selection
+  list.addEventListener('change', (e)=>{
+    if(e.target && e.target.name === `q${qi}`){
+      answers.set(qi, parseInt(e.target.value,10));
+      // if reveal mode is "always" OR after submit, show feedback immediately
+      if(revealMode.value==='always' || submitted){
+        showFeedback(qi);
+      }
+    }
+  });
+
+  // navigation button visibility
+  prevBtn.disabled = (page===0);
+  nextBtn.style.display = (page < order.length-1) ? 'inline-block' : 'none';
+  submitBtn.style.display = (page === order.length-1 && !submitted) ? 'inline-block' : 'none';
+
+  // during review (submitted=true), show explanations
+  if(revealMode.value==='always' || submitted){
+    showFeedback(qi);
+  }
+}
+
+function showFeedback(qi){
+  const picked = answers.get(qi);
+  const correct = QUESTIONS[qi].correct;
+  const choices = card.querySelectorAll('.choice');
+  choices.forEach((ch, idx)=>{
+    ch.classList.remove('correct','incorrect');
+    if(picked !== undefined && idx === picked){
+      ch.classList.add(idx===correct ? 'correct' : 'incorrect');
+    }
+  });
+  const ex = card.querySelector('.explain');
+  ex.classList.add('show');
+}
+
+/* ----------------- Score ring ----------------- */
+function setRing(pct){
+  const clamped = Math.max(0, Math.min(100, pct));
+  const off = CIRC * (1 - clamped/100);
+  arc.style.strokeDasharray = CIRC.toFixed(3);
+  arc.style.strokeDashoffset = off.toFixed(3);
+  scoreText.textContent = `${Math.round(clamped)}%`;
+
+  let color = 'var(--bad)';
+  if(clamped >= 80) color = 'var(--good)';
+  else if(clamped >= 70) color = 'var(--mid)';
+  else if(clamped >= 50) color = 'var(--warn)';
+  arc.style.stroke = color;
+  scoreText.setAttribute('fill', color);
+}
+let animId=null;
+function animateRingTo(target){
+  cancelAnimationFrame(animId);
+  const startText = parseInt(scoreText.textContent) || 0;
+  const start = performance.now();
+  const dur = 600;
+  function tick(t){
+    const k = Math.min(1, (t-start)/dur);
+    const val = startText + (target - startText)*(1 - Math.pow(1-k,3));
+    setRing(val);
+    if(k<1) animId = requestAnimationFrame(tick);
+  }
+  animId = requestAnimationFrame(tick);
+}
+
+/* ----------------- Actions ----------------- */
+prevBtn.addEventListener('click', ()=>{ if(page>0){ page--; render(); }});
+nextBtn.addEventListener('click', ()=>{ if(page<order.length-1){ page++; render(); }});
+
+submitBtn.addEventListener('click', ()=>{
+  const total = order.length;
+  let correct = 0;
+  order.forEach(qi=>{
+    if(answers.get(qi) === QUESTIONS[qi].correct) correct++;
+  });
+  const pct = (correct/total)*100;
+  submitted = true;
+  // show score area + explanations on current (and future) pages
+  scoreArea.hidden = false;
+  meta.textContent = `You got ${correct} of ${total} correct.`;
+  animateRingTo(pct);
+  render();
+});
+
+shuffleBtn.addEventListener('click', ()=>{
+  // Fisher–Yates
+  for(let i=order.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [order[i],order[j]]=[order[j],order[i]];
+  }
+  page=0; submitted=false; scoreArea.hidden=true; setRing(0);
+  render();
+});
+
+resetBtn.addEventListener('click', ()=>{
+  answers.clear();
+  order=[...QUESTIONS.keys()];
+  page=0; submitted=false; scoreArea.hidden=true; setRing(0);
+  scoreText.setAttribute('fill','var(--bad)'); arc.style.stroke='var(--bad)';
+  render();
+});
+
+revealMode.addEventListener('change', render);
+
+/* ----------------- Init ----------------- */
+render();
+setRing(0);
+</script>
+</body>
+</html>
